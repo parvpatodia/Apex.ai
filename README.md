@@ -1,0 +1,160 @@
+# Laksh.ai Oracle Engine
+
+**Biomechanical intelligence for basketball shot mechanics.**
+
+Upload a jump-shot video. The system extracts an 8-dimensional kinematic fingerprint, matches you against active NBA professionals in vector space, and delivers an AI-powered scout report with actionable coaching feedback.
+
+---
+
+## Table of Contents
+
+- [What It Does](#what-it-does)
+- [Architecture Overview](#architecture-overview)
+- [What's Implemented](#whats-implemented)
+- [What's Coming](#whats-coming)
+- [Prerequisites](#prerequisites)
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+- [API Reference](#api-reference)
+- [Technical Limitations](#technical-limitations)
+- [License](#license)
+
+---
+
+## What It Does
+
+1. **Ingest** — You upload a short video of a basketball jump shot (MP4 or similar).
+2. **Extract** — MediaPipe Pose extracts 3D joint trajectories; a custom physics pipeline computes eight biomechanical metrics (release velocity, shot arc, knee/elbow angles, kinetic sync, fluidity, hip rotation, balance).
+3. **Match** — Your 8D vector is queried against ChromaDB, which holds ~500 active NBA players. The nearest neighbor by cosine similarity becomes your "Oracle Match."
+4. **Explain** — Gemini 2.5 Flash consumes your stats, the matched pro's baseline, and kinematic deltas to produce a structured scout report and three drill-focused coaching insights.
+5. **Present** — A React dashboard renders metrics, radar charts, pro comparison, and optional audio brief (TTS) plus a generative metric card (Imagen 4).
+
+---
+
+## Architecture Overview
+
+```
+┌─────────────────┐     ┌──────────────────┐     ┌─────────────┐
+│  Video Upload   │────▶│  physics_engine  │────▶│  8D Vector  │
+│  (MP4)          │     │  MediaPipe Pose  │     │  (raw)      │
+└─────────────────┘     └──────────────────┘     └──────┬──────┘
+                                                        │
+                                                        ▼
+┌─────────────────┐     ┌──────────────────┐     ┌─────────────┐
+│  dashboard.html │◀────│  main.py          │◀────│  ChromaDB   │
+│  (React SPA)     │     │  FastAPI          │     │  cosine NN   │
+└─────────────────┘     └────────┬─────────┘     └─────────────┘
+                                 │
+                    ┌────────────┼────────────┐
+                    ▼            ▼            ▼
+              ┌──────────┐ ┌──────────┐ ┌──────────┐
+              │ Gemini   │ │ Imagen 4 │ │ Cloud TTS │
+              │ 2.5 Flash│ │ (card)   │ │ or gTTS   │
+              └──────────┘ └──────────┘ └──────────┘
+```
+
+---
+
+## What's Implemented
+
+| Component | Description | Technology |
+|-----------|-------------|------------|
+| **Physics Engine** | 3D pose extraction, Savitzky–Golay smoothing, dimensionless velocity/arc derivation, kinetic chain event detection | MediaPipe Pose (Heavy), OpenCV, NumPy, SciPy, Pandas |
+| **8D Vector Schema** | release_velocity_mps, shot_arc_deg, knee_angle, elbow_angle, kinetic_sync_ms, fluidity_score, hip_rotation_deg, balance_index | Aligned across `physics_engine`, `db_seeder`, and `main.py` |
+| **NBA Oracle** | Deterministic heuristics map NBA box-score stats → 8D vectors; ChromaDB cosine search returns nearest pro | nba_api, Chromadb |
+| **Market Index** | L2-distance–based valuation tiers (Elite → Amateur) | Calibrated thresholds |
+| **AI Scout Report** | Structured JSON output: scout_report, athlete_feedback (3 items), witty_catchphrase | Gemini 2.5 Flash, response schema |
+| **Generative Asset** | Holographic 9:16 metric card with personalized overlay | Imagen 4, fallback SVG |
+| **Audio Brief** | Text-to-speech of scout report | Google Cloud TTS Studio Voices (en-US-Studio-O) or gTTS fallback |
+| **Dashboard** | Hash-routed SPA: Ingestion, Biomechanics, Oracle Match | React 18, Tailwind CDN, Babel standalone |
+| **Deployment** | Dockerfile, .dockerignore, .gitignore | Python 3.11-slim, uvicorn |
+
+---
+
+## What's Coming
+
+- **3D volumetric mapping** — Improved accuracy from 45° front-offset camera angles; calibration-aware confidence scoring.
+- **Multi-sport expansion** — Generalized kinematic schemas beyond basketball (e.g., tennis serve, golf swing).
+- **Production hardening** — CORS origins restriction, rate limiting, optional authentication.
+- **Mobile-native capture** — On-device recording flow and UX optimizations.
+- **Historical trends** — Session storage and longitudinal comparison.
+
+---
+
+## Prerequisites
+
+- **Python 3.11+**
+- **Gemini API key** — [Get one](https://ai.google.dev/gemini-api/docs/api-key) from Google AI Studio.
+- **Optional:** Google Cloud TTS credentials for Studio Voices (otherwise gTTS is used).
+
+---
+
+## Quick Start
+
+### Local Development
+
+```bash
+# Clone and enter project
+cd Apex.ai
+
+# Create virtual environment
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Copy environment template and add your Gemini API key
+cp .env.example .env
+# Edit .env: GEMINI_API_KEY=your-key-here
+
+# Start server (with auto-reload)
+./run.sh
+# Or: uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
+
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000). On first run, the app seeds ChromaDB from the NBA API (~30s cold start); subsequent starts reuse the persisted DB.
+
+### Docker
+
+```bash
+docker build -t laksh-oracle .
+docker run -p 8000:8000 -e GEMINI_API_KEY=your-key laksh-oracle
+```
+
+---
+
+## Configuration
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `GEMINI_API_KEY` | Yes | Google AI Studio API key for Gemini and Imagen |
+| `GOOGLE_APPLICATION_CREDENTIALS` | No | Path to service account JSON for Cloud TTS (enables Studio Voices) |
+
+---
+
+## API Reference
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET | Serves dashboard HTML |
+| `/api` | GET | Health check |
+| `/docs` | GET | OpenAPI/Swagger UI |
+| `/analyze-video` | POST | `video` (multipart): Returns full analysis with pro match, scout report, feedback |
+| `/generate-metric-card` | POST | `{ "match": "Player Name" }`: Returns Imagen 4 card or SVG fallback |
+| `/generate-audio-brief` | POST | `{ "text": "..." }`: Returns base64 MP3 |
+
+---
+
+## Technical Limitations
+
+- **NBA vectors are heuristic.** Pro embeddings derive from box-score stats (pts, reb, ast, fg3_pct, etc.), not motion capture. Matching is indicative, not ground-truth.
+- **2D camera constraints.** Pure side-profile views compress depth; knee/hip angles can be underestimated. A 45° front-offset improves 3D inference.
+- **Single-pose assumption.** The pipeline expects one visible shooter; crowded or occluded frames may degrade metrics.
+- **External APIs.** Gemini, Imagen, and NBA API are subject to rate limits and availability.
+
+---
+
+## License
+
+MIT © 2026 Parv Patodia
