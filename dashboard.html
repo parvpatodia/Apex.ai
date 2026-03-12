@@ -94,9 +94,34 @@
   }
   .btn-ghost:hover { border-color:rgba(0,229,255,.3); color:#00E5FF; }
 
-  /* Desktop UI Scaling (90%) */
+  /* Desktop: subtle scale; Mobile: no zoom, full layout */
   @media (min-width: 1024px) {
     body { zoom: 0.9; }
+  }
+  @media (max-width: 768px) {
+    body { zoom: 1; }
+  }
+
+  /* Metric cards: 1–2 cols on narrow, extra row gap for tooltip clearance */
+  .metric-grid { display: grid; gap: 20px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); }
+  @media (max-width: 640px) {
+    .metric-grid { grid-template-columns: 1fr; gap: 24px; }
+  }
+
+  /* Oracle: stack columns on mobile */
+  .oracle-main { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 48px; }
+  @media (max-width: 767px) {
+    .oracle-main { grid-template-columns: 1fr; gap: 32px; }
+  }
+
+  /* Nav: collapse to icons or horizontal scroll on small */
+  @media (max-width: 640px) {
+    .nav-links { overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 4px; }
+  }
+
+  /* Radar: shrink on mobile to avoid dominating viewport */
+  @media (max-width: 767px) {
+    .radar-container { height: 320px !important; padding: 1rem !important; }
   }
 </style>
 </head>
@@ -242,47 +267,60 @@ const IcoSpark  = I(<><path d="M12 2L14.85 9.15 22 12 14.85 14.85 12 22 9.15 14.
 const IcoInfo   = I(<><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></>);
 
 // ══════════════════════════════════════════════════════════════
-//  METRIC CARD WITH TOOLTIP (hover/click for scientific context)
+//  METRIC CARD WITH TOOLTIP — modal overlay (no overlap with bottom cards)
 // ══════════════════════════════════════════════════════════════
 const MetricCardWithTooltip = ({ m, value, tooltip }) => {
   const [show, setShow] = useState(false);
   const tt = tooltip || METRIC_TOOLTIPS[m.key];
   const hasTooltip = !!tt;
   return (
-    <div className="metric-card glass-panel" style={{position:'relative',borderRadius:'20px',padding:'2rem',
-        display:'flex',flexDirection:'column',gap:'12px'}}>
-      <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:'8px'}}>
-        <span className="mono" style={{fontSize:'13px',color:'#6B7280',letterSpacing:'.18em',textTransform:'uppercase',fontWeight:700}}>
-          {m.label}
-        </span>
-        {hasTooltip && (
-          <button type="button" className="metric-info-btn" onMouseEnter={()=>setShow(true)} onMouseLeave={()=>setShow(false)}
-            onClick={()=>setShow(!show)} style={{background:'none',border:'none',cursor:'pointer',padding:'4px',flexShrink:0,color:'#6B7280'}}
-            aria-label="Learn about this metric" aria-expanded={show} aria-haspopup="dialog">
-            <IcoInfo sz={18} st={{color:'currentColor'}}/>
-          </button>
-        )}
+    <>
+      <div className="metric-card glass-panel" style={{position:'relative',borderRadius:'20px',padding:'2rem',
+          display:'flex',flexDirection:'column',gap:'12px'}}>
+        <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:'8px'}}>
+          <span className="mono" style={{fontSize:'13px',color:'#6B7280',letterSpacing:'.18em',textTransform:'uppercase',fontWeight:700}}>
+            {m.label}
+          </span>
+          {hasTooltip && (
+            <button type="button" className="metric-info-btn" onClick={()=>setShow(true)}
+              style={{background:'none',border:'none',cursor:'pointer',padding:'4px',flexShrink:0,color:'#6B7280'}}
+              aria-label="Learn about this metric" aria-expanded={show}>
+              <IcoInfo sz={18} st={{color:'currentColor'}}/>
+            </button>
+          )}
+        </div>
+        <p className="mono" style={{fontSize:'clamp(2.5rem, 5vw, 4rem)',fontWeight:700,lineHeight:1,color:'#fff',margin:0}}>
+          {fmt(value)}{' '}
+          <span style={{fontSize:'1.1rem',color:'#374151',fontWeight:400,marginLeft:'6px'}}>{m.unit}</span>
+        </p>
       </div>
-      <p className="mono" style={{fontSize:'clamp(3rem, 5vw, 4.5rem)',fontWeight:700,lineHeight:1,color:'#fff',margin:0}}>
-        {fmt(value)}{' '}
-        <span style={{fontSize:'1.2rem',color:'#374151',fontWeight:400,marginLeft:'8px'}}>{m.unit}</span>
-      </p>
+      {/* Modal overlay — avoids overlap with cards below */}
       {hasTooltip && show && (
-        <div role="tooltip" style={{position:'absolute',top:'100%',left:0,right:0,marginTop:'8px',zIndex:50,
-          background:'rgba(18,20,28,0.98)',backdropFilter:'blur(12px)',border:'1px solid #1F222E',
-          borderRadius:'12px',padding:'16px',boxShadow:'0 12px 40px rgba(0,0,0,.5)',
-          fontSize:'13px',lineHeight:1.6,color:'#D1D5DB',textAlign:'left'}}
-          onMouseEnter={()=>setShow(true)} onMouseLeave={()=>setShow(false)}>
-          <p style={{margin:'0 0 8px',color:'#00E5FF',fontWeight:600}}>What:</p>
-          <p style={{margin:'0 0 10px'}}>{tt.what}</p>
-          <p style={{margin:'0 0 8px',color:'#39FF14',fontWeight:600}}>Why it matters:</p>
-          <p style={{margin:'0 0 10px'}}>{tt.why}</p>
-          <p style={{margin:'0 0 8px',color:'#9CA3AF',fontWeight:600}}>Ideal range:</p>
-          <p style={{margin:'0 0 10px'}}>{tt.ideal}</p>
-          <p style={{margin:'0 0 0',color:'#6B7280',fontSize:'12px'}}>Limitation: {tt.limitation}</p>
+        <div role="dialog" aria-modal="true" aria-labelledby="metric-tooltip-title"
+          style={{position:'fixed',inset:0,zIndex:200,display:'flex',alignItems:'center',justifyContent:'center',padding:'1rem',
+            background:'rgba(0,0,0,.7)',backdropFilter:'blur(8px)'}}
+          onClick={()=>setShow(false)}>
+          <div style={{maxWidth:'min(420px, 95vw)',maxHeight:'85vh',overflowY:'auto',
+            background:'rgba(18,20,28,0.98)',border:'1px solid #1F222E',borderRadius:'16px',padding:'24px',
+            boxShadow:'0 24px 64px rgba(0,0,0,.6)',fontSize:'14px',lineHeight:1.6,color:'#D1D5DB',textAlign:'left'}}
+            onClick={e=>e.stopPropagation()}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'16px'}}>
+              <p id="metric-tooltip-title" className="mono" style={{fontSize:'14px',color:'#00E5FF',letterSpacing:'.15em',margin:0}}>{m.label}</p>
+              <button type="button" onClick={()=>setShow(false)} style={{background:'none',border:'none',cursor:'pointer',padding:'4px'}} aria-label="Close">
+                <IcoX sz={20} st={{color:'#6B7280'}}/>
+              </button>
+            </div>
+            <p style={{margin:'0 0 8px',color:'#00E5FF',fontWeight:600,fontSize:'12px'}}>What</p>
+            <p style={{margin:'0 0 14px'}}>{tt.what}</p>
+            <p style={{margin:'0 0 8px',color:'#39FF14',fontWeight:600,fontSize:'12px'}}>Why it matters</p>
+            <p style={{margin:'0 0 14px'}}>{tt.why}</p>
+            <p style={{margin:'0 0 8px',color:'#9CA3AF',fontWeight:600,fontSize:'12px'}}>Ideal range</p>
+            <p style={{margin:'0 0 14px'}}>{tt.ideal}</p>
+            <p style={{margin:0,color:'#6B7280',fontSize:'11px'}}>Limitation: {tt.limitation}</p>
+          </div>
         </div>
       )}
-    </div>
+    </>
   );
 };
 
@@ -409,7 +447,7 @@ const TopNav = ({ route, navigate, videoFile, isAnalyzing, onExecute, analysisDa
         </button>
 
         {/* Route links */}
-        <div style={{display:'flex',gap:'8px'}}>
+        <div className="nav-links" style={{display:'flex',gap:'8px'}}>
           {links.map(l=>(
             <button key={l.href} onClick={()=>navigate(l.href)}
               className="nav-link"
@@ -615,7 +653,7 @@ const BiomechanicsPage = ({ stats, videoRef, canvasRef, videoObjectUrl, isVisibl
             Live Telemetry
           </h3>
         </div>
-        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill, minmax(min(100%, 280px), 1fr))',gap:'20px'}}>
+        <div className="metric-grid" style={{marginBottom:'2rem'}}>
           {METRICS.map(m=>(
             <MetricCardWithTooltip key={m.key} m={m} value={s[m.key]} />
           ))}
@@ -669,7 +707,7 @@ const OracleMatchPage = ({ stats, proMatch, matchedPro, deltas, feedback, scoutR
             </div>
 
             {/* Main responsive grid — wraps on narrow screens */}
-            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(min(100%, 320px), 1fr))',gap:'48px',marginBottom:'64px'}}>
+            <div className="oracle-main" style={{marginBottom:'64px'}}>
 
               {/* LEFT — Pro Identity + Radar */}
               <div style={{display:'flex',flexDirection:'column',gap:'32px'}}>
@@ -704,7 +742,7 @@ const OracleMatchPage = ({ stats, proMatch, matchedPro, deltas, feedback, scoutR
                   </div>
                   <div style={{marginTop:'8px', padding:'12px', background:'rgba(255,255,255,0.03)', borderRadius:'12px', borderLeft:'3px solid #00E5FF'}}>
                     <p style={{fontSize:'0.9rem', color:'#D1D5DB', lineHeight:1.6, margin:0}}>
-                      <strong style={{color:'#fff'}}>Camera Calibration Note:</strong> Pure 2D side-profiles can compress joint depth (Knee/Hip). For a 95%+ confidence match, record your next session from a <strong style={{color:'#00E5FF'}}>45-degree front-offset angle</strong> to unlock true 3D volumetric mapping.
+                      For 95%+ confidence: record from a <strong style={{color:'#00E5FF'}}>45° front-offset</strong>; pure side-view compresses Knee/Hip depth.
                     </p>
                   </div>
                   {(validationWarnings || []).length > 0 && (
@@ -717,8 +755,8 @@ const OracleMatchPage = ({ stats, proMatch, matchedPro, deltas, feedback, scoutR
                   )}
                 </div>
 
-                {/* Radar — 500px container */}
-                <div style={{background:'#12141C',border:'1px solid #1F222E',borderRadius:'24px',padding:'2rem',
+                {/* Radar — responsive: 500px desktop, 320px mobile */}
+                <div className="radar-container" style={{background:'#12141C',border:'1px solid #1F222E',borderRadius:'24px',padding:'2rem',
                              height:'500px',display:'flex',alignItems:'center',justifyContent:'center'}}>
                   <SvgRadar userData={radarUser} proData={radarPro} labels={radarLabels}
                              proName={proMatch||'Pro'} size={420}/>
