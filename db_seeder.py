@@ -17,6 +17,7 @@ fetch. Deterministic heuristics synthesize 8D kinematic vectors from real stats.
 """
 
 import logging
+import os
 import time
 from typing import Any, Optional
 
@@ -28,6 +29,8 @@ logger = logging.getLogger(__name__)
 
 COLLECTION_NAME = "apex_oracle_v7"
 NBA_API_DELAY = 0.6  # seconds between requests (rate-limit safety)
+NBA_API_TIMEOUT = int(os.environ.get("NBA_API_TIMEOUT", "90"))  # cloud→stats.nba.com is slow
+NBA_API_RETRIES = 2  # try twice before fallback
 
 # Fallback seed when NBA API fails (timeout, rate-limit, cloud IP block).
 # Synthetic stats run through translate_to_kinematics for consistent 8D vectors.
@@ -183,6 +186,43 @@ def _seed_fallback(chroma_client: chromadb.Client) -> int:
     return len(embeddings)
 
 
+def _fetch_nba_data():
+    """
+    Fetch NBA player stats with extended timeout and retry.
+    Returns DataFrame or None on failure.
+    """
+    try:
+        from nba_api.stats.endpoints import leaguedashplayerstats
+    except ImportError:
+        return None
+
+    last_error = None
+    for attempt in range(1, NBA_API_RETRIES + 1):
+        try:
+            time.sleep(NBA_API_DELAY)
+            endpoint = leaguedashplayerstats.LeagueDashPlayerStats()
+            # Extend nba_api timeout (default 30s) — cloud→stats.nba.com is often slow
+            client = getattr(endpoint, "nba_response", None) or getattr(endpoint, "client", None)
+            if client is not None and hasattr(client, "timeout"):
+                client.timeout = NBA_API_TIMEOUT
+            # Alternative: patch http module if available
+            try:
+                from nba_api.stats.library import http as nba_http
+                if hasattr(nba_http, "NBAStatsHTTP"):
+                    nba_http.NBAStatsHTTP.timeout = NBA_API_TIMEOUT
+            except Exception:
+                pass
+            df = endpoint.get_data_frames()[0]
+            if df is not None and not df.empty:
+                return df
+        except Exception as e:
+            last_error = e
+            if attempt < NBA_API_RETRIES:
+                time.sleep(5)  # backoff before retry
+    logger.warning("NBA API fetch failed after %d attempt(s): %s", NBA_API_RETRIES, last_error)
+    return None
+
+
 def seed_database(chroma_client: Optional[chromadb.Client] = None) -> int:
     """
     Fetch active NBA players, compute 8D vectors, seed ChromaDB.
@@ -194,16 +234,8 @@ def seed_database(chroma_client: Optional[chromadb.Client] = None) -> int:
         logger.warning("nba_api not installed; using fallback seed.")
         return _seed_fallback(chroma_client) if chroma_client else 0
 
-    time.sleep(NBA_API_DELAY)
-    try:
-        endpoint = leaguedashplayerstats.LeagueDashPlayerStats()
-        df = endpoint.get_data_frames()[0]
-    except Exception as e:
-        logger.error("NBA API fetch failed: %s", e)
-        count = _seed_fallback(chroma_client) if chroma_client else 0
-        return count
-
-    if df.empty:
+    df = _fetch_nba_data()
+    if df is None or df.empty:
         logger.warning("No player data returned.")
         return _seed_fallback(chroma_client) if chroma_client else 0
 

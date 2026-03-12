@@ -89,6 +89,7 @@ def _init_chroma():
 
     sqlite_path = os.path.join(PERSIST_DIR, "chroma.sqlite3")
     db_healthy = os.path.exists(sqlite_path) and os.path.getsize(sqlite_path) > 0
+    logger.info("ChromaDB health check: db_healthy=%s, path=%s", db_healthy, PERSIST_DIR)
 
     if not db_healthy:
         logger.info("DATABASE NOT FOUND OR CORRUPT — wiping and rebuilding…")
@@ -134,6 +135,8 @@ def _init_chroma():
         n = getattr(_collection, "count", None)
         cnt = n() if callable(n) else (n if isinstance(n, int) else "?")
         logger.info("Collection '%s' ready (%s items).", COLLECTION_NAME, cnt)
+        # Single-line health summary for Railway logs — grep for "ChromaDB health"
+        logger.info("ChromaDB health: OK | pre_seeded=%s | players=%s", db_healthy, cnt)
     except Exception:
         logger.info("Collection '%s' ready.", COLLECTION_NAME)
 
