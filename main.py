@@ -34,7 +34,8 @@ except Exception:
 logger = logging.getLogger(__name__)
 
 COLLECTION_NAME = "apex_oracle_v7"
-PERSIST_DIR = "./chroma_db"
+# Use absolute path: ./chroma_db is ambiguous when cwd differs in deployment (Railway, Docker)
+PERSIST_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chroma_db")
 
 # Module-level client and collection — populated in startup_event
 chroma_client = None
@@ -70,7 +71,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # In production, restrict this to your React app's domain
+    allow_origins=["https://lakshai-production.up.railway.app"], # In production, restrict this to your React app's domain
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -81,13 +82,8 @@ client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 _DASHBOARD = Path(__file__).resolve().parent / "dashboard.html"
 
 
-@app.on_event("startup")
-async def startup_event():
-    """
-    Initialise persistent ChromaDB with cosine similarity.
-    Skips NBA API seeding when a valid .sqlite3 already exists on disk
-    — eliminates the ~30 s cold-start on every dev restart.
-    """
+def _init_chroma():
+    """Initialise ChromaDB client and collection. Tries PERSIST_DIR first, then /tmp (for read-only deploy fs)."""
     global chroma_client, _collection
     import shutil
 
@@ -96,13 +92,20 @@ async def startup_event():
 
     if not db_healthy:
         logger.info("DATABASE NOT FOUND OR CORRUPT — wiping and rebuilding…")
-        # Wipe BEFORE touching PersistentClient so no stale file-lock is created
         if os.path.exists(PERSIST_DIR):
             shutil.rmtree(PERSIST_DIR)
         os.makedirs(PERSIST_DIR, exist_ok=True)
 
-    # Only one PersistentClient is ever created — after the directory is clean
-    chroma_client = chromadb.PersistentClient(path=PERSIST_DIR)
+    for path in [PERSIST_DIR, os.path.join(os.environ.get("TMPDIR", "/tmp"), "apex_chroma")]:
+        try:
+            os.makedirs(path, exist_ok=True)
+            chroma_client = chromadb.PersistentClient(path=path)
+            logger.info("ChromaDB initialised at %s", path)
+            break
+        except Exception as e:
+            logger.warning("ChromaDB PersistentClient failed at %s: %s", path, e)
+    else:
+        raise RuntimeError("ChromaDB could not initialise — try CHROMA_PERSIST_DIR env var or check disk")
 
     if not db_healthy:
         # Let seed_database own collection creation (it deletes + recreates internally).
@@ -116,12 +119,28 @@ async def startup_event():
 
     # Always resolve _collection from the client — this is the single source of truth
     # and survives seed_database's internal delete+recreate cycle.
+    # Use get_or_create so deployment survives NBA API seeding failures (rate limits,
+    # network blocks, ephemeral FS). Empty collection = no pro match, but app stays healthy.
     try:
         _collection = chroma_client.get_collection(name=COLLECTION_NAME)
-        logger.info("Collection '%s' ready (%d items).", COLLECTION_NAME, _collection.count())
-    except Exception as e:
-        logger.error("Collection unavailable after startup: %s", e)
-        _collection = None
+    except Exception:
+        _collection = chroma_client.get_or_create_collection(
+            name=COLLECTION_NAME,
+            metadata={"hnsw:space": "cosine"},
+        )
+        logger.warning("Collection '%s' created empty (seeding may have failed).", COLLECTION_NAME)
+    # Log count separately — don't let logging failures wipe _collection (fixes deployment crash)
+    try:
+        n = getattr(_collection, "count", None)
+        cnt = n() if callable(n) else (n if isinstance(n, int) else "?")
+        logger.info("Collection '%s' ready (%s items).", COLLECTION_NAME, cnt)
+    except Exception:
+        logger.info("Collection '%s' ready.", COLLECTION_NAME)
+
+
+@app.on_event("startup")
+async def startup_event():
+    _init_chroma()
 
 
 @app.get("/")
