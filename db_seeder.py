@@ -29,6 +29,27 @@ logger = logging.getLogger(__name__)
 COLLECTION_NAME = "apex_oracle_v7"
 NBA_API_DELAY = 0.6  # seconds between requests (rate-limit safety)
 
+# Fallback seed when NBA API fails (timeout, rate-limit, cloud IP block).
+# Synthetic stats run through translate_to_kinematics for consistent 8D vectors.
+# Format: (name, player_id, {REB, AST, TOV, FG3_PCT, PTS, GP})
+FALLBACK_PLAYERS = [
+    ("Stephen Curry", 201939, {"REB": 5.2, "AST": 6.5, "TOV": 2.8, "FG3_PCT": 0.429, "PTS": 26.4, "GP": 69}),
+    ("Klay Thompson", 202691, {"REB": 4.0, "AST": 2.2, "TOV": 1.6, "FG3_PCT": 0.412, "PTS": 21.5, "GP": 65}),
+    ("LeBron James", 2544, {"REB": 8.3, "AST": 7.1, "TOV": 3.5, "FG3_PCT": 0.355, "PTS": 25.7, "GP": 55}),
+    ("Kevin Durant", 201142, {"REB": 6.4, "AST": 5.0, "TOV": 2.9, "FG3_PCT": 0.389, "PTS": 27.1, "GP": 47}),
+    ("Luka Doncic", 1629029, {"REB": 8.0, "AST": 8.8, "TOV": 4.0, "FG3_PCT": 0.368, "PTS": 28.4, "GP": 66}),
+    ("Nikola Jokic", 203999, {"REB": 12.2, "AST": 9.8, "TOV": 3.6, "FG3_PCT": 0.332, "PTS": 26.2, "GP": 69}),
+    ("Giannis Antetokounmpo", 203507, {"REB": 11.5, "AST": 5.7, "TOV": 3.2, "FG3_PCT": 0.272, "PTS": 30.4, "GP": 63}),
+    ("Joel Embiid", 203954, {"REB": 11.0, "AST": 3.6, "TOV": 3.4, "FG3_PCT": 0.348, "PTS": 28.7, "GP": 39}),
+    ("Jayson Tatum", 1628369, {"REB": 8.1, "AST": 4.6, "TOV": 2.6, "FG3_PCT": 0.375, "PTS": 26.9, "GP": 74}),
+    ("Devin Booker", 1626164, {"REB": 4.2, "AST": 6.8, "TOV": 2.9, "FG3_PCT": 0.362, "PTS": 27.1, "GP": 68}),
+    ("Anthony Edwards", 1630162, {"REB": 5.5, "AST": 5.1, "TOV": 3.0, "FG3_PCT": 0.358, "PTS": 25.9, "GP": 79}),
+    ("Tyrese Haliburton", 1630169, {"REB": 3.9, "AST": 10.9, "TOV": 2.3, "FG3_PCT": 0.367, "PTS": 20.1, "GP": 69}),
+    ("Damian Lillard", 203081, {"REB": 4.2, "AST": 7.2, "TOV": 2.8, "FG3_PCT": 0.378, "PTS": 25.1, "GP": 73}),
+    ("Donovan Mitchell", 1628378, {"REB": 4.3, "AST": 5.3, "TOV": 2.8, "FG3_PCT": 0.368, "PTS": 26.6, "GP": 55}),
+    ("Shai Gilgeous-Alexander", 1628983, {"REB": 5.5, "AST": 6.2, "TOV": 2.5, "FG3_PCT": 0.353, "PTS": 30.1, "GP": 75}),
+]
+
 # Expert feature weights — equalise L2 distance variance across all 8 dimensions.
 # Each weight scales its dimension so the full biomechanical span maps to ~100 units,
 # preventing high-magnitude dimensions (e.g. kinetic_sync_ms ~300) from dominating search.
@@ -125,6 +146,43 @@ def translate_to_kinematics(row: dict[str, Any]) -> list[float]:
     ]
 
 
+def _seed_fallback(chroma_client: chromadb.Client) -> int:
+    """Seed ChromaDB with static fallback players when NBA API fails."""
+    embeddings = []
+    documents = []
+    ids = []
+    metadatas = []
+
+    for i, (name, player_id, stats) in enumerate(FALLBACK_PLAYERS):
+        vec = translate_to_kinematics(stats)
+        meta = {"player_id": player_id}
+        for j, v in enumerate(vec):
+            meta[f"v{j}"] = float(v)
+        weighted_vec = [v * w for v, w in zip(vec, FEATURE_WEIGHTS)]
+        embeddings.append(weighted_vec)
+        documents.append(name)
+        ids.append(f"fallback_{player_id}_{i}")
+        metadatas.append(meta)
+
+    try:
+        chroma_client.delete_collection(COLLECTION_NAME)
+    except Exception:
+        pass
+
+    collection = chroma_client.create_collection(
+        name=COLLECTION_NAME,
+        metadata={"hnsw:space": "cosine"},
+    )
+    collection.add(
+        embeddings=embeddings,
+        documents=documents,
+        ids=ids,
+        metadatas=metadatas,
+    )
+    logger.info("Seeded %d fallback players (NBA API unavailable).", len(embeddings))
+    return len(embeddings)
+
+
 def seed_database(chroma_client: Optional[chromadb.Client] = None) -> int:
     """
     Fetch active NBA players, compute 8D vectors, seed ChromaDB.
@@ -133,8 +191,8 @@ def seed_database(chroma_client: Optional[chromadb.Client] = None) -> int:
     try:
         from nba_api.stats.endpoints import leaguedashplayerstats
     except ImportError:
-        logger.warning("nba_api not installed; skipping seed.")
-        return 0
+        logger.warning("nba_api not installed; using fallback seed.")
+        return _seed_fallback(chroma_client) if chroma_client else 0
 
     time.sleep(NBA_API_DELAY)
     try:
@@ -142,16 +200,17 @@ def seed_database(chroma_client: Optional[chromadb.Client] = None) -> int:
         df = endpoint.get_data_frames()[0]
     except Exception as e:
         logger.error("NBA API fetch failed: %s", e)
-        return 0
+        count = _seed_fallback(chroma_client) if chroma_client else 0
+        return count
 
     if df.empty:
         logger.warning("No player data returned.")
-        return 0
+        return _seed_fallback(chroma_client) if chroma_client else 0
 
     # Filter: minimum games played
     df = df[df["GP"] >= 5].reset_index(drop=True)
     if df.empty:
-        return 0
+        return _seed_fallback(chroma_client) if chroma_client else 0
 
     embeddings = []
     documents = []
@@ -176,7 +235,7 @@ def seed_database(chroma_client: Optional[chromadb.Client] = None) -> int:
         metadatas.append(meta)
 
     if not embeddings:
-        return 0
+        return _seed_fallback(chroma_client) if chroma_client else 0
 
     client = chroma_client or chromadb.Client()
     try:

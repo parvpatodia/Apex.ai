@@ -287,17 +287,20 @@ async def analyze_video(video: UploadFile = File(...)):
         match_distance = 999.0
         confidence_score = 88.5
 
+        # ChromaDB returns [[]] for empty collections — check inner list before indexing
         try:
-            if results and "distances" in results and results["distances"]:
-                distance = results["distances"][0][0]
+            dists = results.get("distances") if results else []
+            docs = results.get("documents") if results else []
+            metas = results.get("metadatas") if results else []
+            if dists and len(dists) > 0 and len(dists[0]) > 0:
+                distance = dists[0][0]
                 match_distance = float(distance)
-                # Cosine distance: 0 is perfect. Scale so typical matches (0.05–0.15) yield 85–95%
                 confidence_score = round(max(0.0, min(100.0, 100.0 - (distance * 150))), 1)
-            if results and "documents" in results and results["documents"]:
-                match_name = str(results["documents"][0][0])
-            if results and "metadatas" in results and results["metadatas"]:
-                meta = dict(results["metadatas"][0][0])
-        except (IndexError, TypeError) as e:
+            if docs and len(docs) > 0 and len(docs[0]) > 0:
+                match_name = str(docs[0][0])
+            if metas and len(metas) > 0 and len(metas[0]) > 0 and metas[0][0]:
+                meta = dict(metas[0][0])
+        except (IndexError, TypeError, KeyError) as e:
             logger.warning("ChromaDB parsing error: %s", e)
 
         player_id = meta.get("id") or meta.get("player_id")
