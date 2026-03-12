@@ -251,6 +251,7 @@ def _normalize_analysis(
         "athlete_feedback": feedback,
         "pro_match": pro_match,
         "matched_pro": matched_pro,
+        "telemetry": biomech.get("telemetry") or {},
     }
 
 

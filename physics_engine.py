@@ -268,32 +268,42 @@ class KinematicAnalyzer:
                 jerk = np.std(np.diff(np.diff(wrist_y[dip_frame:release_frame]))) if release_frame - dip_frame > 3 else 0
                 fluidity = int(np.clip(100 - (jerk * 5000), 40, 99))
 
-            # 2D Telemetry Payload for UI Rendering
+            # 2D Telemetry Payload for UI Rendering — Research-grade per-frame overlay
             k2d, a2d = f_2d[f"{side}_knee"], f_2d[f"{side}_ankle"]
+            total_frames = len(w2d)
+
+            def _joints_at(i):
+                """Build joints dict for frame index i (0-based)."""
+                if i < 0 or i >= total_frames:
+                    return None
+                return {
+                    "wrist":    [round(float(w2d[i, 0]), 4), round(float(w2d[i, 1]), 4)],
+                    "elbow":    [round(float(e2d[i, 0]), 4), round(float(e2d[i, 1]), 4)],
+                    "shoulder": [round(float(s2d[i, 0]), 4), round(float(s2d[i, 1]), 4)],
+                    "hip":      [round(float(h2d[i, 0]), 4), round(float(h2d[i, 1]), 4)],
+                    "knee":     [round(float(k2d[i, 0]), 4), round(float(k2d[i, 1]), 4)],
+                    "ankle":    [round(float(a2d[i, 0]), 4), round(float(a2d[i, 1]), 4)],
+                }
+
+            # Per-frame skeleton overlay: dip to release + 1.5s post-release (smooth continuous visualization)
+            end_frame = min(total_frames - 1, release_frame + int(fps * 1.5))
+            frames = []
+            for fi in range(dip_frame, end_frame + 1):
+                j = _joints_at(fi)
+                if j:
+                    frames.append({"time_sec": round(float(fi / fps), 3), "joints": j})
 
             telemetry = {
+                "fps": round(float(fps), 2),
                 "dip": {
                     "time_sec": round(float(dip_frame / fps), 3),
-                    "joints": {
-                        "wrist":    [round(float(w2d[dip_frame, 0]), 3), round(float(w2d[dip_frame, 1]), 3)],
-                        "elbow":    [round(float(e2d[dip_frame, 0]), 3), round(float(e2d[dip_frame, 1]), 3)],
-                        "shoulder": [round(float(s2d[dip_frame, 0]), 3), round(float(s2d[dip_frame, 1]), 3)],
-                        "hip":      [round(float(h2d[dip_frame, 0]), 3), round(float(h2d[dip_frame, 1]), 3)],
-                        "knee":     [round(float(k2d[dip_frame, 0]), 3), round(float(k2d[dip_frame, 1]), 3)],
-                        "ankle":    [round(float(a2d[dip_frame, 0]), 3), round(float(a2d[dip_frame, 1]), 3)],
-                    },
+                    "joints": _joints_at(dip_frame) or {},
                 },
                 "release": {
                     "time_sec": round(float(release_frame / fps), 3),
-                    "joints": {
-                        "wrist":    [round(float(w2d[release_frame, 0]), 3), round(float(w2d[release_frame, 1]), 3)],
-                        "elbow":    [round(float(e2d[release_frame, 0]), 3), round(float(e2d[release_frame, 1]), 3)],
-                        "shoulder": [round(float(s2d[release_frame, 0]), 3), round(float(s2d[release_frame, 1]), 3)],
-                        "hip":      [round(float(h2d[release_frame, 0]), 3), round(float(h2d[release_frame, 1]), 3)],
-                        "knee":     [round(float(k2d[release_frame, 0]), 3), round(float(k2d[release_frame, 1]), 3)],
-                        "ankle":    [round(float(a2d[release_frame, 0]), 3), round(float(a2d[release_frame, 1]), 3)],
-                    },
+                    "joints": _joints_at(release_frame) or {},
                 },
+                "frames": frames,
             }
 
             return {
@@ -315,4 +325,4 @@ class KinematicAnalyzer:
             return self._fallback()
 
     def _fallback(self):
-        return {"release_velocity_mps": 7.0, "shot_arc_deg": 45.0, "knee_angle": 145.0, "elbow_angle": 165.0, "knee_flexion_at_dip": 145.0, "elbow_flexion_at_release": 165.0, "kinetic_sync_ms": 150.0, "hip_rotation_deg": 5.0, "balance_index": 75, "fluidity_score": 65, "telemetry": {}}
+        return {"release_velocity_mps": 7.0, "shot_arc_deg": 45.0, "knee_angle": 145.0, "elbow_angle": 165.0, "knee_flexion_at_dip": 145.0, "elbow_flexion_at_release": 165.0, "kinetic_sync_ms": 150.0, "hip_rotation_deg": 5.0, "balance_index": 75, "fluidity_score": 65, "telemetry": {"dip": {}, "release": {}, "frames": []}}

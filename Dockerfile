@@ -13,6 +13,18 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Application code
 COPY . .
 
+# Pre-download MediaPipe pose model so analysis overlay works on first request (no runtime download)
+RUN python -c "\
+from pathlib import Path; \
+p = Path('/app/pose_landmarker_heavy.task'); \
+if not p.exists(): \
+  import urllib.request, ssl; \
+  ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE; \
+  urllib.request.urlretrieve('https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/1/pose_landmarker_heavy.task', str(p)); \
+  print('Pose model downloaded'); \
+else: print('Pose model exists'); \
+"
+
 # Pre-seed ChromaDB during build — no NBA API calls at runtime. Build has network;
 # if NBA API succeeds we get full roster; if it fails we use fallback. Either way
 # chroma_db is baked into the image so startup is instant and error-free.

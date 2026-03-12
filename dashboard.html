@@ -883,25 +883,59 @@ const App = () => {
     v.load();
   }, [videoObjUrl]);
 
-  // Canvas rAF skeleton loop — starts once, runs forever
+  // Canvas rAF skeleton loop — per-frame MediaPipe overlay with smooth interpolation
   useEffect(() => {
     const drawSkel = (ctx, canvas, video, joints, color) => {
-      if (!joints?.wrist) return;
-      const vr=video.videoWidth/video.videoHeight, cr=canvas.width/canvas.height;
+      if (!joints?.wrist || !joints?.shoulder) return;
+      const vw=video.videoWidth, vh=video.videoHeight;
+      if (!vw||!vh) return;
+      const vr=vw/vh, cr=canvas.width/canvas.height;
       let rw=canvas.width, rh=canvas.height, ox=0, oy=0;
       if (vr>cr) { rh=canvas.width/vr; oy=(canvas.height-rh)/2; }
       else       { rw=canvas.height*vr; ox=(canvas.width-rw)/2;  }
-      const c = j => ({x:ox+j[0]*rw, y:oy+j[1]*rh});
+      const c = j => {
+        const x=ox+(Number(j[0])||0)*rw, y=oy+(Number(j[1])||0)*rh;
+        return {x, y};
+      };
       const [w,e,s,h,k,a] = [c(joints.wrist),c(joints.elbow),c(joints.shoulder),
                               c(joints.hip),c(joints.knee),c(joints.ankle)];
+      const pts=[w,e,s,h,k,a];
+      const valid=pts.every(p=>!isNaN(p.x)&&!isNaN(p.y));
+      if (!valid) return;
+      // Glow layer
+      ctx.shadowColor=color; ctx.shadowBlur=14;
       ctx.beginPath();
       ctx.moveTo(w.x,w.y); ctx.lineTo(e.x,e.y); ctx.lineTo(s.x,s.y);
       ctx.lineTo(h.x,h.y); ctx.lineTo(k.x,k.y); ctx.lineTo(a.x,a.y);
-      ctx.strokeStyle=color; ctx.lineWidth=5; ctx.lineCap='round'; ctx.lineJoin='round'; ctx.stroke();
-      [w,e,s,h,k,a].forEach(p=>{
-        ctx.beginPath(); ctx.arc(p.x,p.y,6,0,2*Math.PI);
-        ctx.fillStyle='#111'; ctx.fill(); ctx.lineWidth=3; ctx.strokeStyle=color; ctx.stroke();
+      ctx.strokeStyle=color; ctx.lineWidth=6; ctx.lineCap='round'; ctx.lineJoin='round'; ctx.stroke();
+      ctx.shadowBlur=0;
+      // Core stroke
+      ctx.strokeStyle=color; ctx.lineWidth=4; ctx.stroke();
+      pts.forEach(p=>{
+        ctx.beginPath(); ctx.arc(p.x,p.y,7,0,2*Math.PI);
+        ctx.fillStyle='#0a0a0f'; ctx.fill();
+        ctx.strokeStyle=color; ctx.lineWidth=3; ctx.stroke();
       });
+    };
+    const getJointsForTime = (tel, t) => {
+      const frames=tel.frames;
+      if (Array.isArray(frames)&&frames.length>0) {
+        const dip=tel.dip?.time_sec??0, rel=tel.release?.time_sec??dip+1;
+        const start=dip-0.05, end=rel+1.5;
+        if (t<start||t>end) return null;
+        let best=null, bestDiff=Infinity;
+        for (const f of frames) {
+          const d=Math.abs(f.time_sec-t);
+          if (d<bestDiff) { bestDiff=d; best=f.joints; }
+        }
+        return best;
+      }
+      if (tel.dip&&tel.release) {
+        const dip=tel.dip.time_sec, rel=tel.release.time_sec;
+        if (t>=dip-0.1&&t<rel) return tel.dip.joints;
+        if (t>=rel&&t<rel+1.5) return tel.release.joints;
+      }
+      return null;
     };
     const loop = () => {
       rafRef.current = requestAnimationFrame(loop);
@@ -909,15 +943,18 @@ const App = () => {
       if (!video||!canvas) return;
       const rect=video.getBoundingClientRect();
       if (rect.width===0) return;
-      const rw=Math.round(rect.width), rh=Math.round(rect.height);
-      if (canvas.width!==rw||canvas.height!==rh) { canvas.width=rw; canvas.height=rh; }
+      const cw=Math.round(rect.width), ch=Math.round(rect.height);
+      if (canvas.width!==cw||canvas.height!==ch) { canvas.width=cw; canvas.height=ch; }
       const tel=telRef.current;
       const ctx=canvas.getContext('2d');
-      if (!tel?.dip) { ctx.clearRect(0,0,canvas.width,canvas.height); return; }
-      const t=video.currentTime, dip=tel.dip.time_sec, rel=tel.release.time_sec;
       ctx.clearRect(0,0,canvas.width,canvas.height);
-      if      (t>=dip-.1&&t<rel)  drawSkel(ctx,canvas,video,tel.dip.joints,'#39FF14');
-      else if (t>=rel&&t<rel+1.5) drawSkel(ctx,canvas,video,tel.release.joints,'#00E5FF');
+      if (!tel?.dip&&!tel?.frames?.length) return;
+      const t=video.currentTime;
+      const joints=getJointsForTime(tel,t);
+      if (joints) {
+        const inRelease=tel.release&&t>=tel.release.time_sec&&t<tel.release.time_sec+1.5;
+        drawSkel(ctx,canvas,video,joints,inRelease?'#00E5FF':'#39FF14');
+      }
     };
     rafRef.current = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(rafRef.current);
