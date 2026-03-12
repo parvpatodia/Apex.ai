@@ -41,6 +41,12 @@
   .metric-card:hover { border-color:rgba(57,255,20,.35)!important; transform:translateY(-2px);
                        box-shadow:0 8px 32px rgba(57,255,20,.07); }
 
+  /* Metric tooltip info icon — hover for discoverability */
+  .metric-info-btn:hover { color: #00E5FF !important; }
+  .metric-info-btn { color:#6B7280; transition:color .2s; }
+  .metric-info-btn:hover { color:#00E5FF; }
+  .metric-info-btn:hover { color:#00E5FF; }
+
   /* Premium Glassmorphism */
   .glass-panel {
     background: rgba(18, 20, 28, 0.6);
@@ -156,7 +162,7 @@ const useRouter = () => {
 };
 
 // ══════════════════════════════════════════════════════════════
-//  CONSTANTS
+//  CONSTANTS + METRIC TOOLTIPS (scientific context for trust)
 // ══════════════════════════════════════════════════════════════
 const METRICS = [
   { key:'release_velocity_mps', label:'Release Velocity', unit:'m/s'  },
@@ -168,6 +174,18 @@ const METRICS = [
   { key:'balance_index',        label:'Balance Index',    unit:'/100' },
   { key:'fluidity_score',       label:'Fluidity Score',   unit:'/100' },
 ];
+
+// Scientific context for each metric — builds user trust, elevates platform
+const METRIC_TOOLTIPS = {
+  release_velocity_mps: { what:'Estimated ball release speed from wrist trajectory and limb length scaling.', why:'Higher velocity improves range and shot consistency. NBA guards avg 7–9 m/s.', ideal:'7–9 m/s', limitation:'Derived from 2D motion; true 3D would require calibrated cameras.' },
+  shot_arc_deg: { what:'Angle of the shooting arm (shoulder→wrist) at release, or post-release flight path.', why:'45–55° optimizes entry angle and reduces rim rejection. Too flat = bricks.', ideal:'45–55°', limitation:'Side-view can compress apparent arc; 45° offset improves accuracy.' },
+  knee_angle: { what:'Knee flexion at the dip phase (hip–knee–ankle angle).', why:'Moderate dip (140–165°) loads lower body for power transfer without excessive crouch.', ideal:'140–165°', limitation:'MediaPipe 3D; occlusion or angle can introduce ±5–10° error.' },
+  elbow_angle: { what:'Elbow flexion at release (shoulder–elbow–wrist angle).', why:'Proper alignment (160–180°) ensures straight shot and repeatability.', ideal:'165–178°', limitation:'Single-camera estimates; lab goniometers are ground truth.' },
+  hip_rotation_deg: { what:'Torso twist: shoulder line vs hip line at the dip.', why:'Slight rotation (5–15°) supports one-motion flow; excess reduces consistency.', ideal:'5–15°', limitation:'Sensitive to camera angle; best from 45° offset view.' },
+  kinetic_sync_ms: { what:'Time from dip (lowest wrist) to release (highest wrist).', why:'Short sync (120–250 ms) indicates efficient one-motion shot.', ideal:'120–250 ms', limitation:'Frame-rate dependent; 30 fps ≈ ±33 ms granularity.' },
+  balance_index: { what:'Hip–ankle alignment: how centered mass is over base.', why:'High score (85+) = stable base; leaning reduces power and accuracy.', ideal:'85–99', limitation:'2D projection; true CoM requires force plates.' },
+  fluidity_score: { what:'Smoothness of wrist path from dip to release (low jerk).', why:'Fluid motion = repeatable mechanics; jerky = inconsistent release.', ideal:'75–99', limitation:'Sensitive to pose noise; Savitzky–Golay filtering applied.' },
+};
 
 const COMPARE = [
   { label:'Shot Arc',      uk:'shot_arc_deg',         pv:45,  mx:60,  dk:'arc_gap'   },
@@ -221,6 +239,83 @@ const IcoX      = I(<><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x
 const IcoUpload = I(<><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></>);
 const IcoArrow  = I(<><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></>);
 const IcoSpark  = I(<><path d="M12 2L14.85 9.15 22 12 14.85 14.85 12 22 9.15 14.85 2 12 9.15 9.15Z"/></>);
+const IcoInfo   = I(<><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></>);
+
+// ══════════════════════════════════════════════════════════════
+//  METRIC CARD WITH TOOLTIP (hover/click for scientific context)
+// ══════════════════════════════════════════════════════════════
+const MetricCardWithTooltip = ({ m, value, tooltip }) => {
+  const [show, setShow] = useState(false);
+  const tt = tooltip || METRIC_TOOLTIPS[m.key];
+  const hasTooltip = !!tt;
+  return (
+    <div className="metric-card glass-panel" style={{position:'relative',borderRadius:'20px',padding:'2rem',
+        display:'flex',flexDirection:'column',gap:'12px'}}>
+      <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:'8px'}}>
+        <span className="mono" style={{fontSize:'13px',color:'#6B7280',letterSpacing:'.18em',textTransform:'uppercase',fontWeight:700}}>
+          {m.label}
+        </span>
+        {hasTooltip && (
+          <button type="button" className="metric-info-btn" onMouseEnter={()=>setShow(true)} onMouseLeave={()=>setShow(false)}
+            onClick={()=>setShow(!show)} style={{background:'none',border:'none',cursor:'pointer',padding:'4px',flexShrink:0,color:'#6B7280'}}
+            aria-label="Learn about this metric" aria-expanded={show} aria-haspopup="dialog">
+            <IcoInfo sz={18} st={{color:'currentColor'}}/>
+          </button>
+        )}
+      </div>
+      <p className="mono" style={{fontSize:'clamp(3rem, 5vw, 4.5rem)',fontWeight:700,lineHeight:1,color:'#fff',margin:0}}>
+        {fmt(value)}{' '}
+        <span style={{fontSize:'1.2rem',color:'#374151',fontWeight:400,marginLeft:'8px'}}>{m.unit}</span>
+      </p>
+      {hasTooltip && show && (
+        <div role="tooltip" style={{position:'absolute',top:'100%',left:0,right:0,marginTop:'8px',zIndex:50,
+          background:'rgba(18,20,28,0.98)',backdropFilter:'blur(12px)',border:'1px solid #1F222E',
+          borderRadius:'12px',padding:'16px',boxShadow:'0 12px 40px rgba(0,0,0,.5)',
+          fontSize:'13px',lineHeight:1.6,color:'#D1D5DB',textAlign:'left'}}
+          onMouseEnter={()=>setShow(true)} onMouseLeave={()=>setShow(false)}>
+          <p style={{margin:'0 0 8px',color:'#00E5FF',fontWeight:600}}>What:</p>
+          <p style={{margin:'0 0 10px'}}>{tt.what}</p>
+          <p style={{margin:'0 0 8px',color:'#39FF14',fontWeight:600}}>Why it matters:</p>
+          <p style={{margin:'0 0 10px'}}>{tt.why}</p>
+          <p style={{margin:'0 0 8px',color:'#9CA3AF',fontWeight:600}}>Ideal range:</p>
+          <p style={{margin:'0 0 10px'}}>{tt.ideal}</p>
+          <p style={{margin:'0 0 0',color:'#6B7280',fontSize:'12px'}}>Limitation: {tt.limitation}</p>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Inline tooltip for Oracle COMPARE labels — same scientific context
+const InlineMetricTooltip = ({ metricKey }) => {
+  const [show, setShow] = useState(false);
+  const tt = METRIC_TOOLTIPS[metricKey];
+  if (!tt) return null;
+  return (
+    <span style={{position:'relative',display:'inline-flex'}}>
+      <button type="button" onMouseEnter={()=>setShow(true)} onMouseLeave={()=>setShow(false)}
+        onClick={()=>setShow(!show)} style={{background:'none',border:'none',cursor:'pointer',padding:'2px'}}
+        aria-label="Metric info" aria-expanded={show}>
+        <IcoInfo sz={14} st={{color:show?'#00E5FF':'#6B7280'}}/>
+      </button>
+      {show && (
+        <div role="tooltip" style={{position:'absolute',left:0,top:'100%',marginTop:'6px',zIndex:60,minWidth:'260px',
+          background:'rgba(18,20,28,0.98)',backdropFilter:'blur(12px)',border:'1px solid #1F222E',
+          borderRadius:'10px',padding:'12px',boxShadow:'0 12px 40px rgba(0,0,0,.5)',
+          fontSize:'12px',lineHeight:1.5,color:'#D1D5DB',textAlign:'left'}}
+          onMouseEnter={()=>setShow(true)} onMouseLeave={()=>setShow(false)}>
+          <p style={{margin:'0 0 6px',color:'#00E5FF',fontWeight:600,fontSize:'11px'}}>What:</p>
+          <p style={{margin:'0 0 8px',fontSize:'11px'}}>{tt.what}</p>
+          <p style={{margin:'0 0 6px',color:'#39FF14',fontWeight:600,fontSize:'11px'}}>Why:</p>
+          <p style={{margin:'0 0 8px',fontSize:'11px'}}>{tt.why}</p>
+          <p style={{margin:'0 0 6px',color:'#9CA3AF',fontWeight:600,fontSize:'11px'}}>Ideal:</p>
+          <p style={{margin:'0 0 8px',fontSize:'11px'}}>{tt.ideal}</p>
+          <p style={{margin:'0 0 0',color:'#6B7280',fontSize:'10px'}}>Limitation: {tt.limitation}</p>
+        </div>
+      )}
+    </span>
+  );
+};
 
 // ══════════════════════════════════════════════════════════════
 //  LARGE SVG RADAR CHART (no Recharts dependency)
@@ -444,8 +539,13 @@ const IngestionPage = ({ videoFile, onFileSelect, onExecute, isAnalyzing, naviga
 //  NOTE: videoRef/canvasRef live here (in App) and are passed down
 //        so the video element is never unmounted by routing
 // ══════════════════════════════════════════════════════════════
-const BiomechanicsPage = ({ stats, videoRef, canvasRef, videoObjectUrl, isVisible }) => {
+const BiomechanicsPage = ({ stats, videoRef, canvasRef, videoObjectUrl, isVisible, detectionMetadata, validationWarnings }) => {
   const s = stats || {};
+  const vw = validationWarnings || [];
+  const det = detectionMetadata || {};
+  const algorithms = det.algorithms || ['MediaPipe Pose'];
+  const multiPersonNote = det.video_quality_note;
+  const peopleMax = det.people_detected_max ?? 1;
   return (
     <div className="page-enter" style={{display:isVisible?'block':'none'}}>
       <div style={{maxWidth:'1600px',margin:'0 auto',padding:'clamp(1rem, 5vw, 3rem) clamp(1rem, 4vw, 4rem) clamp(1.5rem, 6vw, 6rem)'}}>
@@ -461,6 +561,32 @@ const BiomechanicsPage = ({ stats, videoRef, canvasRef, videoObjectUrl, isVisibl
           </div>
         </div>
 
+        {/* Algorithm HUD + Multi-person note */}
+        {videoObjectUrl && (
+          <div style={{maxWidth:'900px',margin:'0 auto 1rem',display:'flex',flexWrap:'wrap',gap:'12px',alignItems:'center'}}>
+            <div style={{display:'flex',alignItems:'center',gap:'8px',padding:'8px 16px',background:'rgba(18,20,28,0.8)',border:'1px solid #1F222E',borderRadius:'10px'}}>
+              <span className="mono" style={{fontSize:'11px',color:'#6B7280',letterSpacing:'.15em'}}>ALGORITHMS</span>
+              {algorithms.map((a,i)=>(<span key={i} className="mono" style={{fontSize:'12px',color:'#00E5FF',fontWeight:600}}>{a}{i<algorithms.length-1?' • ':''}</span>))}
+            </div>
+            <div style={{padding:'8px 16px',background:'rgba(57,255,20,.08)',border:'1px solid rgba(57,255,20,.3)',borderRadius:'10px'}}>
+              <span className="mono" style={{fontSize:'12px',color:'#39FF14',fontWeight:700}}>PRIMARY SUBJECT</span>
+            </div>
+            {peopleMax > 1 && <span className="mono" style={{fontSize:'11px',color:'#9CA3AF'}}>{peopleMax} people detected</span>}
+          </div>
+        )}
+        {multiPersonNote && videoObjectUrl && (
+          <div style={{maxWidth:'900px',margin:'0 auto 1rem',padding:'12px 20px',background:'rgba(255,165,0,.1)',borderLeft:'4px solid #ff9500',borderRadius:'0 10px 10px 0'}}>
+            <p style={{fontSize:'0.95rem',color:'#D1D5DB',margin:0}}>{multiPersonNote}</p>
+          </div>
+        )}
+        {vw.length > 0 && videoObjectUrl && (
+          <div style={{maxWidth:'900px',margin:'0 auto 1rem',padding:'12px 20px',background:'rgba(0,229,255,.08)',borderLeft:'4px solid #00E5FF',borderRadius:'0 10px 10px 0'}}>
+            <p className="mono" style={{fontSize:'11px',color:'#00E5FF',letterSpacing:'.12em',marginBottom:'8px'}}>VIDEO QUALITY NOTES</p>
+            <ul style={{margin:0,paddingLeft:'1.25rem',fontSize:'0.9rem',color:'#D1D5DB',lineHeight:1.6}}>
+              {vw.map((msg,i)=><li key={i}>{msg}</li>)}
+            </ul>
+          </div>
+        )}
         {/* Video player — massive, centred */}
         <div style={{borderRadius:'24px',overflow:'hidden',position:'relative',
                      background:'#000',maxWidth:'900px',margin:'0 auto 4rem',
@@ -491,17 +617,7 @@ const BiomechanicsPage = ({ stats, videoRef, canvasRef, videoObjectUrl, isVisibl
         </div>
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill, minmax(min(100%, 280px), 1fr))',gap:'20px'}}>
           {METRICS.map(m=>(
-            <div key={m.key} className="metric-card glass-panel"
-              style={{borderRadius:'20px',padding:'2rem',
-                      display:'flex',flexDirection:'column',gap:'12px'}}>
-              <span className="mono" style={{fontSize:'13px',color:'#6B7280',letterSpacing:'.18em',textTransform:'uppercase',fontWeight:700}}>
-                {m.label}
-              </span>
-              <p className="mono" style={{fontSize:'clamp(3rem, 5vw, 4.5rem)',fontWeight:700,lineHeight:1,color:'#fff',margin:0}}>
-                {fmt(s[m.key])}
-                <span style={{fontSize:'1.2rem',color:'#374151',fontWeight:400,marginLeft:'8px'}}>{m.unit}</span>
-              </p>
-            </div>
+            <MetricCardWithTooltip key={m.key} m={m} value={s[m.key]} />
           ))}
         </div>
       </div>
@@ -513,7 +629,7 @@ const BiomechanicsPage = ({ stats, videoRef, canvasRef, videoObjectUrl, isVisibl
 //  PAGE 3 — ORACLE MATCH  (#/oracle-match)
 // ══════════════════════════════════════════════════════════════
 const OracleMatchPage = ({ stats, proMatch, matchedPro, deltas, feedback, scoutReport,
-                           assetImg, assetStatus, onGenAsset, isGenAsset, confidence, athleteName, wittyCatchphrase }) => {
+                           assetImg, assetStatus, onGenAsset, isGenAsset, confidence, athleteName, wittyCatchphrase, validationWarnings }) => {
   const s  = stats  || {};
   const vs = matchedPro?.vector_stats || {};
   const d  = deltas || {};
@@ -591,6 +707,14 @@ const OracleMatchPage = ({ stats, proMatch, matchedPro, deltas, feedback, scoutR
                       <strong style={{color:'#fff'}}>Camera Calibration Note:</strong> Pure 2D side-profiles can compress joint depth (Knee/Hip). For a 95%+ confidence match, record your next session from a <strong style={{color:'#00E5FF'}}>45-degree front-offset angle</strong> to unlock true 3D volumetric mapping.
                     </p>
                   </div>
+                  {(validationWarnings || []).length > 0 && (
+                    <div style={{marginTop:'12px', padding:'12px', background:'rgba(0,229,255,0.05)', borderRadius:'12px', borderLeft:'3px solid rgba(0,229,255,0.5)'}}>
+                      <p className="mono" style={{fontSize:'10px', color:'#6B7280', letterSpacing:'.12em', marginBottom:'6px'}}>VIDEO QUALITY</p>
+                      <ul style={{margin:0, paddingLeft:'1rem', fontSize:'0.8rem', color:'#9CA3AF', lineHeight:1.5}}>
+                        {(validationWarnings || []).map((msg,i)=><li key={i}>{msg}</li>)}
+                      </ul>
+                    </div>
+                  )}
                 </div>
 
                 {/* Radar — 500px container */}
@@ -608,7 +732,9 @@ const OracleMatchPage = ({ stats, proMatch, matchedPro, deltas, feedback, scoutR
                     return (
                       <div key={m.label} style={{display:'flex',flexDirection:'column',gap:'8px'}}>
                         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                          <span style={{fontSize:'16px',fontWeight:600,color:'#D1D5DB'}}>{m.label}</span>
+                          <span style={{fontSize:'16px',fontWeight:600,color:'#D1D5DB',display:'inline-flex',alignItems:'center',gap:'4px'}}>
+                            {m.label}<InlineMetricTooltip metricKey={m.uk} />
+                          </span>
                           <div style={{display:'flex',gap:'10px',alignItems:'center'}} className="mono">
                             <span style={{color:'#9CA3AF',fontSize:'15px'}}>{fmt(uv)}</span>
                             <span style={{color:'#374151'}}>vs</span>
@@ -1074,7 +1200,9 @@ const App = () => {
       {/* Biomechanics page — always mounted when video loaded, hidden otherwise */}
       <div style={{display: isBio ? 'block' : 'none'}}>
         <BiomechanicsPage stats={s} videoRef={videoRef} canvasRef={canvasRef}
-                          videoObjectUrl={videoObjUrl} isVisible={isBio}/>
+                          videoObjectUrl={videoObjUrl} isVisible={isBio}
+                          detectionMetadata={data?.detection_metadata}
+                          validationWarnings={data?.validation_warnings}/>
       </div>
 
       {isOracle && <OracleMatchPage stats={s} proMatch={data?.pro_match}
@@ -1083,7 +1211,8 @@ const App = () => {
                      assetImg={assetImg} assetStatus={assetStatus}
                      onGenAsset={handleGenAsset} isGenAsset={isGenAsset}
                      confidence={data?.confidence} athleteName={athleteName}
-                     wittyCatchphrase={data?.witty_catchphrase}/>}
+                     wittyCatchphrase={data?.witty_catchphrase}
+                     validationWarnings={data?.validation_warnings}/>}
 
       <MetaModal open={showMeta} onClose={()=>setShowMeta(false)} payload={metaPayload}/>
       <Toast msg={toast}/>

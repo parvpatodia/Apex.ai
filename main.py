@@ -394,7 +394,17 @@ REQUIRED: Add `witty_catchphrase` — a short (max 8 words), fun, player-specifi
         data["kinematic_deltas"] = deltas
 
         out = _normalize_analysis(data, biomech, market_index, match_name, matched_pro)
+        # Reduce confidence when multiple people detected (improves pro-match reliability)
+        det = (biomech.get("telemetry") or {}).get("detection_metadata") or {}
+        if det.get("people_detected_max", 1) > 1:
+            confidence_score = round(confidence_score * 0.85, 1)  # 15% penalty
+        # Reduce confidence when validation warnings exist (video quality, pose visibility, etc.)
+        vw = (biomech.get("telemetry") or {}).get("validation_warnings") or []
+        if vw:
+            confidence_score = round(confidence_score * max(0.7, 1.0 - len(vw) * 0.03), 1)
         out["confidence"] = confidence_score
+        out["detection_metadata"] = det
+        out["validation_warnings"] = vw
         return out
     finally:
         if os.path.exists(safe_name):

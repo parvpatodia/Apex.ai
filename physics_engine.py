@@ -96,9 +96,16 @@ class KinematicAnalyzer:
                 t_ms = int(1000 * frame_idx / fps)
                 mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
                 result = self._landmarker.detect_for_video(mp_img, t_ms)
-                
-                wlm = result.pose_world_landmarks[0] if result and result.pose_world_landmarks else None
-                plm = result.pose_landmarks[0] if result and result.pose_landmarks else None
+                # Safe extraction: MediaPipe can return empty lists when no person detected
+                wlm = None
+                plm = None
+                if result:
+                    pwlm = getattr(result, "pose_world_landmarks", None)
+                    plms = getattr(result, "pose_landmarks", None)
+                    if pwlm and len(pwlm) > 0:
+                        wlm = pwlm[0]
+                    if plms and len(plms) > 0:
+                        plm = plms[0]
                 
                 indices = [(LEFT_WRIST, RIGHT_WRIST, "wrist"), (LEFT_ELBOW, RIGHT_ELBOW, "elbow"),
                            (LEFT_SHOULDER, RIGHT_SHOULDER, "shoulder"), (LEFT_HIP, RIGHT_HIP, "hip"),
@@ -132,6 +139,98 @@ class KinematicAnalyzer:
                 except: smoothed[:, d] = clean[:, d]
             out[k] = smoothed
         return out
+
+    def _count_people_sampled(self, fps: float, total_frames: int):
+        """MediaPipe-only multi-person awareness: sample frames with num_poses=3."""
+        try:
+            from mediapipe.tasks.python import vision
+            from mediapipe.tasks.python.core import base_options
+            model_path = Path(__file__).resolve().parent / "pose_landmarker_heavy.task"
+            if not model_path.exists():
+                return None
+            opts = vision.PoseLandmarkerOptions(
+                base_options=base_options.BaseOptions(model_asset_path=str(model_path)),
+                running_mode=vision.RunningMode.VIDEO,
+                num_poses=3,
+            )
+            multi_landmarker = vision.PoseLandmarker.create_from_options(opts)
+            cap = cv2.VideoCapture(self.video_path)
+            if not cap.isOpened():
+                return None
+            step = max(1, total_frames // 8)
+            counts = []
+            import mediapipe as mp
+            try:
+                for fi in range(0, total_frames, step):
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, fi)
+                    ret, frame = cap.read()
+                    if not ret:
+                        continue
+                    t_ms = int(1000 * fi / fps)
+                    mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                    result = multi_landmarker.detect_for_video(mp_img, t_ms)
+                    n = len(result.pose_landmarks) if result and result.pose_landmarks else 0
+                    counts.append(n)
+            finally:
+                cap.release()
+                multi_landmarker.close()
+            if not counts:
+                return None
+            max_people = max(counts)
+            return {
+                "algorithms": ["MediaPipe Pose"],
+                "people_detected_max": max_people,
+                "video_quality_note": (
+                    "Multiple people detected. Analysis focuses on the most visible subject. "
+                    "For best pro matching, record only the shooter in frame."
+                ) if max_people > 1 else None,
+            }
+        except Exception:
+            return None
+
+    def _assess_video_quality(self, w: float, h: float, fps: float, total_frames: int) -> dict:
+        """Assess video quality for robustness. Returns notes that affect confidence."""
+        notes = []
+        if w < 320 or h < 240:
+            notes.append("Low resolution may reduce pose accuracy. Use 720p or higher for best results.")
+        if fps < 20:
+            notes.append("Low framerate (<20 fps) can blur fast motions. 30 fps or higher recommended.")
+        elif fps > 90:
+            notes.append("Slow-motion detected. Kinetic sync timing adjusted for high-speed capture.")
+        ar = w / h if h > 0 else 1.0
+        if ar < 0.6:  # Portrait/vertical
+            notes.append("Vertical/portrait video can compress shot arc. For best accuracy, use landscape with a 45° angle.")
+        elif ar > 2.2:  # Ultra-wide
+            notes.append("Ultra-wide format may distort joint positions at frame edges.")
+        if total_frames < 30:
+            notes.append("Short clip: ensure it contains a single, complete jump shot for reliable analysis.")
+        return {"video_quality_notes": notes, "resolution": f"{int(w)}×{int(h)}", "fps": round(fps, 1)}
+
+    def _compute_pose_visibility(self, raw_2d: dict) -> float:
+        """Average visibility (0–1) of key shooting joints across all frames."""
+        keys = ["left_wrist", "right_wrist", "left_elbow", "right_elbow", "left_shoulder", "right_shoulder"]
+        vals = []
+        for k in keys:
+            arr = raw_2d.get(k)
+            if arr is not None and len(arr) > 0 and arr.shape[1] >= 3:
+                vals.append(np.nanmean(arr[:, 2]))
+        return float(np.mean(vals)) if vals else 0.0
+
+    def _compute_validation_flags(self, metrics: dict, visibility: float, used_fallback: bool) -> list:
+        """Biological plausibility and data-quality checks. Returns human-readable warnings."""
+        flags = []
+        if used_fallback:
+            flags.append("Analysis used fallback values. Video may lack a detectable jump shot.")
+            return flags
+        if visibility < 0.5:
+            flags.append("Low pose visibility. Ensure full-body visibility and good lighting.")
+        k = metrics.get("knee_angle")
+        if k is not None and (k < 90 or k > 180):
+            flags.append(f"Knee angle ({k}°) outside biological range. Check for occlusion or camera angle.")
+        e = metrics.get("elbow_angle")
+        if e is not None and (e < 100 or e > 180):
+            flags.append(f"Elbow angle ({e}°) outside typical range. Ensure arm is visible at release.")
+        return flags
 
     def analyze(self):
         try:
@@ -306,6 +405,28 @@ class KinematicAnalyzer:
                 "frames": frames,
             }
 
+            # Multi-person awareness: sample frames with num_poses=3 to estimate people count
+            detection_metadata = self._count_people_sampled(fps, total_frames)
+            if detection_metadata:
+                telemetry["detection_metadata"] = detection_metadata
+
+            # Video quality and validation (expert-grade robustness)
+            vq = self._assess_video_quality(w, h, fps, total_frames)
+            telemetry["video_quality"] = vq
+            visibility = self._compute_pose_visibility(raw_2d)
+            metrics_out = {
+                "release_velocity_mps": round(float(vel_mps), 2),
+                "shot_arc_deg": round(float(arc_deg), 1),
+                "knee_angle": round(float(np.clip(k_ang, 90, 180)), 1),
+                "elbow_angle": round(float(np.clip(e_ang, 100, 180)), 1),
+                "kinetic_sync_ms": round(float(sync_ms), 1),
+                "hip_rotation_deg": round(float(yaw_deg), 1),
+                "balance_index": balance_index,
+                "fluidity_score": fluidity,
+            }
+            validation_flags = self._compute_validation_flags(metrics_out, visibility, used_fallback=False)
+            telemetry["validation_warnings"] = validation_flags + (vq.get("video_quality_notes") or [])
+
             return {
                 "release_velocity_mps": round(float(vel_mps), 2),
                 "shot_arc_deg": round(float(arc_deg), 1),
@@ -325,4 +446,14 @@ class KinematicAnalyzer:
             return self._fallback()
 
     def _fallback(self):
-        return {"release_velocity_mps": 7.0, "shot_arc_deg": 45.0, "knee_angle": 145.0, "elbow_angle": 165.0, "knee_flexion_at_dip": 145.0, "elbow_flexion_at_release": 165.0, "kinetic_sync_ms": 150.0, "hip_rotation_deg": 5.0, "balance_index": 75, "fluidity_score": 65, "telemetry": {"dip": {}, "release": {}, "frames": []}}
+        telemetry = {
+            "dip": {}, "release": {}, "frames": [],
+            "validation_warnings": ["Analysis used fallback values. Video may lack a detectable jump shot or pose."],
+            "detection_metadata": {"algorithms": ["MediaPipe Pose"], "people_detected_max": 0},
+        }
+        return {
+            "release_velocity_mps": 7.0, "shot_arc_deg": 45.0, "knee_angle": 145.0, "elbow_angle": 165.0,
+            "knee_flexion_at_dip": 145.0, "elbow_flexion_at_release": 165.0, "kinetic_sync_ms": 150.0,
+            "hip_rotation_deg": 5.0, "balance_index": 75, "fluidity_score": 65,
+            "telemetry": telemetry,
+        }
