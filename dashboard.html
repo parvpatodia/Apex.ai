@@ -577,7 +577,7 @@ const IngestionPage = ({ videoFile, onFileSelect, onExecute, isAnalyzing, naviga
 //  NOTE: videoRef/canvasRef live here (in App) and are passed down
 //        so the video element is never unmounted by routing
 // ══════════════════════════════════════════════════════════════
-const BiomechanicsPage = ({ stats, videoRef, canvasRef, videoObjectUrl, isVisible, detectionMetadata, validationWarnings }) => {
+const BiomechanicsPage = ({ stats, videoRef, canvasRef, videoObjectUrl, isVisible, detectionMetadata, validationWarnings, overlayConfig, setOverlayConfig }) => {
   const s = stats || {};
   const vw = validationWarnings || [];
   const det = detectionMetadata || {};
@@ -623,6 +623,25 @@ const BiomechanicsPage = ({ stats, videoRef, canvasRef, videoObjectUrl, isVisibl
             <ul style={{margin:0,paddingLeft:'1.25rem',fontSize:'0.9rem',color:'#D1D5DB',lineHeight:1.6}}>
               {vw.map((msg,i)=><li key={i}>{msg}</li>)}
             </ul>
+          </div>
+        )}
+        {/* Overlay toggles — model-agnostic (works with MediaPipe, RTMPose, ViTPose) */}
+        {videoObjectUrl && overlayConfig && setOverlayConfig && (
+          <div style={{maxWidth:'900px',margin:'0 auto 1rem',display:'flex',flexWrap:'wrap',gap:'10px',alignItems:'center'}}>
+            <span className="mono" style={{fontSize:'11px',color:'#6B7280',letterSpacing:'.15em'}}>OVERLAY</span>
+            {[
+              { key:'showLabels', label:'Labels' },
+              { key:'showReleasePoint', label:'Release Point' },
+              { key:'showShootingArmHighlight', label:'Shooting Arm' },
+              { key:'showPhaseLabels', label:'Phase' },
+            ].map(({key,label})=>(
+              <button key={key} onClick={()=>setOverlayConfig(c=>({...c,[key]:!c[key]}))}
+                style={{padding:'6px 14px',borderRadius:'8px',border:'1px solid '+(overlayConfig[key]?'#39FF14':'#1F222E'),
+                  background:overlayConfig[key]?'rgba(57,255,20,.12)':'transparent',color:overlayConfig[key]?'#39FF14':'#6B7280',
+                  fontSize:'12px',fontWeight:600,cursor:'pointer',fontFamily:'Roboto Mono'}}>
+                {label}
+              </button>
+            ))}
           </div>
         )}
         {/* Video player — massive, centred */}
@@ -1028,6 +1047,11 @@ const App = () => {
   const [isGenAsset,   setIsGenAsset]   = useState(false);
   const [showMeta,     setShowMeta]     = useState(false);
   const [toast,        setToast]        = useState('');
+  // Overlay config — model-agnostic (works with MediaPipe, RTMPose, ViTPose, etc.)
+  const [overlayConfig, setOverlayConfig] = useState({
+    showLabels: true, showReleasePoint: true, showShootingArmHighlight: true, showPhaseLabels: true
+  });
+  const overlayConfigRef = useRef(overlayConfig);
 
   // Video & canvas refs — live here so they persist across route changes
   const videoRef  = useRef(null);
@@ -1035,6 +1059,7 @@ const App = () => {
   const rafRef    = useRef(null);
   const telRef    = useRef(null);
 
+  useEffect(() => { overlayConfigRef.current = overlayConfig; }, [overlayConfig]);
   useEffect(() => {
     telRef.current = data?.telemetry?.dip ? data.telemetry : null;
   }, [data]);
@@ -1047,9 +1072,10 @@ const App = () => {
     v.load();
   }, [videoObjUrl]);
 
-  // Canvas rAF skeleton loop — per-frame MediaPipe overlay with smooth interpolation
+  // Canvas rAF skeleton loop — Options 1+2: labels, release point, shooting arm, phase (model-agnostic)
   useEffect(() => {
-    const drawSkel = (ctx, canvas, video, joints, color) => {
+    const JOINT_LABELS = { wrist:'Wrist', elbow:'Elbow', shoulder:'Shoulder', hip:'Hip', knee:'Knee', ankle:'Ankle' };
+    const drawSkel = (ctx, canvas, video, joints, color, cfg, tel, t) => {
       if (!joints?.wrist || !joints?.shoulder) return;
       const vw=video.videoWidth, vh=video.videoHeight;
       if (!vw||!vh) return;
@@ -1066,20 +1092,60 @@ const App = () => {
       const pts=[w,e,s,h,k,a];
       const valid=pts.every(p=>!isNaN(p.x)&&!isNaN(p.y));
       if (!valid) return;
-      // Glow layer
+      const keys=['wrist','elbow','shoulder','hip','knee','ankle'];
+      const isRelease = tel?.release && t>=tel.release.time_sec && t<tel.release.time_sec+1.5;
+      const atReleaseFrame = tel?.release && Math.abs(t-tel.release.time_sec)<0.08;
+
+      // 1. Shooting arm highlight (shoulder→elbow→wrist) — Option 2
+      if (cfg?.showShootingArmHighlight) {
+        ctx.shadowColor=color; ctx.shadowBlur=18;
+        ctx.strokeStyle=color; ctx.lineWidth=7; ctx.lineCap='round'; ctx.lineJoin='round';
+        ctx.beginPath(); ctx.moveTo(s.x,s.y); ctx.lineTo(e.x,e.y); ctx.lineTo(w.x,w.y);
+        ctx.stroke();
+        ctx.shadowBlur=0;
+      }
+      // 2. Full skeleton (body chain)
       ctx.shadowColor=color; ctx.shadowBlur=14;
       ctx.beginPath();
       ctx.moveTo(w.x,w.y); ctx.lineTo(e.x,e.y); ctx.lineTo(s.x,s.y);
       ctx.lineTo(h.x,h.y); ctx.lineTo(k.x,k.y); ctx.lineTo(a.x,a.y);
       ctx.strokeStyle=color; ctx.lineWidth=6; ctx.lineCap='round'; ctx.lineJoin='round'; ctx.stroke();
       ctx.shadowBlur=0;
-      // Core stroke
       ctx.strokeStyle=color; ctx.lineWidth=4; ctx.stroke();
       pts.forEach(p=>{
         ctx.beginPath(); ctx.arc(p.x,p.y,7,0,2*Math.PI);
         ctx.fillStyle='#0a0a0f'; ctx.fill();
         ctx.strokeStyle=color; ctx.lineWidth=3; ctx.stroke();
       });
+
+      // 3. Release point marker — Option 1
+      if (cfg?.showReleasePoint && atReleaseFrame) {
+        ctx.save();
+        ctx.strokeStyle='#00E5FF'; ctx.fillStyle='rgba(0,229,255,0.3)';
+        ctx.lineWidth=3;
+        ctx.beginPath(); ctx.arc(w.x,w.y,18,0,2*Math.PI); ctx.fill(); ctx.stroke();
+        ctx.font='11px Roboto Mono'; ctx.fillStyle='#00E5FF'; ctx.textAlign='center';
+        ctx.fillText('RELEASE', w.x, w.y+36);
+        ctx.restore();
+      }
+
+      // 4. Joint labels — Option 1
+      if (cfg?.showLabels) {
+        ctx.font='11px Roboto Mono'; ctx.fillStyle='rgba(255,255,255,0.9)'; ctx.textAlign='center';
+        keys.forEach((key,i)=>{ const p=pts[i]; if(p&&!isNaN(p.x)) ctx.fillText(JOINT_LABELS[key]||key, p.x, p.y-14); });
+      }
+
+      // 5. Phase label — Option 2
+      if (cfg?.showPhaseLabels && tel?.dip && tel?.release) {
+        const dip=tel.dip.time_sec, rel=tel.release.time_sec;
+        let phase='';
+        if (t<dip) phase='Setup';
+        else if (t<rel-0.05) phase='Drive';
+        else if (Math.abs(t-rel)<0.1) phase='Release';
+        else phase='Follow-through';
+        ctx.font='bold 13px Roboto Mono'; ctx.fillStyle='#00E5FF'; ctx.textAlign='left';
+        ctx.fillText(phase, ox+12, oy+24);
+      }
     };
     const getJointsForTime = (tel, t) => {
       const frames=tel.frames;
@@ -1117,7 +1183,8 @@ const App = () => {
       const joints=getJointsForTime(tel,t);
       if (joints) {
         const inRelease=tel.release&&t>=tel.release.time_sec&&t<tel.release.time_sec+1.5;
-        drawSkel(ctx,canvas,video,joints,inRelease?'#00E5FF':'#39FF14');
+        const cfg=overlayConfigRef.current;
+        drawSkel(ctx,canvas,video,joints,inRelease?'#00E5FF':'#39FF14',cfg,tel,t);
       }
     };
     rafRef.current = requestAnimationFrame(loop);
@@ -1240,7 +1307,8 @@ const App = () => {
         <BiomechanicsPage stats={s} videoRef={videoRef} canvasRef={canvasRef}
                           videoObjectUrl={videoObjUrl} isVisible={isBio}
                           detectionMetadata={data?.detection_metadata}
-                          validationWarnings={data?.validation_warnings}/>
+                          validationWarnings={data?.validation_warnings}
+                          overlayConfig={overlayConfig} setOverlayConfig={setOverlayConfig}/>
       </div>
 
       {isOracle && <OracleMatchPage stats={s} proMatch={data?.pro_match}

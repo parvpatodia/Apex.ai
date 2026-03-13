@@ -75,6 +75,17 @@ class KinematicAnalyzer:
             print(f"FATAL: MediaPipe Tasks API failed to initialize:\n{traceback.format_exc()}")
             return False
 
+    def _preprocess_frame(self, frame: np.ndarray) -> np.ndarray:
+        """Resize frame for consistent pose extraction (Option 3: video preprocessing).
+        Max 720p on longer side; preserves aspect. Coords stay normalized [0,1]."""
+        h, w = frame.shape[:2]
+        max_dim = 720
+        if max(h, w) <= max_dim:
+            return frame
+        scale = max_dim / max(h, w)
+        new_w, new_h = int(w * scale), int(h * scale)
+        return cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+
     def extract_frames(self):
         import mediapipe as mp
         cap = cv2.VideoCapture(self.video_path)
@@ -91,6 +102,7 @@ class KinematicAnalyzer:
                 ret, frame = cap.read()
                 if not ret: break
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                rgb = self._preprocess_frame(rgb)
                 
                 # Format for Tasks API Video Mode
                 t_ms = int(1000 * frame_idx / fps)
@@ -394,6 +406,7 @@ class KinematicAnalyzer:
 
             telemetry = {
                 "fps": round(float(fps), 2),
+                "shooting_side": side,  # "left" or "right" — model-agnostic for overlay
                 "dip": {
                     "time_sec": round(float(dip_frame / fps), 3),
                     "joints": _joints_at(dip_frame) or {},
