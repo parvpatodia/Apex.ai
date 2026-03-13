@@ -231,6 +231,21 @@ const CAT_COLOR = cat => {
   return '#00E5FF';
 };
 
+// Actionable fix for validation warnings — honest, user-friendly
+const getActionableFix = msg => {
+  const m = (msg||'').toLowerCase();
+  if (m.includes('resolution')||m.includes('720p')) return 'Fix: Record at 720p or higher.';
+  if (m.includes('framerate')||m.includes('fps')) return 'Fix: Use 30 fps or higher.';
+  if (m.includes('multiple')||m.includes('people')) return 'Fix: Record only the shooter in frame.';
+  if (m.includes('visibility')||m.includes('lighting')) return 'Fix: Ensure full-body visibility and good lighting.';
+  if (m.includes('vertical')||m.includes('portrait')) return 'Fix: Use landscape with a 45° angle.';
+  if (m.includes('short')||m.includes('clip')) return 'Fix: Include one complete shot (dip → release → follow-through).';
+  if (m.includes('fallback')||m.includes('detectable')) return 'Fix: Ensure a clear jump shot; single person visible.';
+  if (m.includes('knee')||m.includes('biological')) return 'Fix: Check for occlusion or use 45° camera angle.';
+  if (m.includes('elbow')) return 'Fix: Ensure arm is visible at release.';
+  return null;
+};
+
 // ══════════════════════════════════════════════════════════════
 //  UTILS
 // ══════════════════════════════════════════════════════════════
@@ -501,9 +516,13 @@ const TopNav = ({ route, navigate, videoFile, isAnalyzing, onExecute, analysisDa
 // ══════════════════════════════════════════════════════════════
 //  PAGE 1 — INGESTION  (#/)
 // ══════════════════════════════════════════════════════════════
-const IngestionPage = ({ videoFile, onFileSelect, onExecute, isAnalyzing, navigate, athleteName, setAthleteName }) => {
+const IngestionPage = ({ videoFile, onFileSelect, onExecute, isAnalyzing, navigate, athleteName, setAthleteName, videoDuration, clipRange, setClipRange, sport, setSport }) => {
   const [dragging, setDragging] = useState(false);
+  const [showTips, setShowTips] = useState(false);
   const inputRef = useRef(null);
+  const dur = videoDuration ?? 0;
+  const start = clipRange?.start ?? 0;
+  const end = clipRange?.end ?? dur;
 
   const onDrop = e => {
     e.preventDefault(); setDragging(false);
@@ -531,7 +550,14 @@ const IngestionPage = ({ videoFile, onFileSelect, onExecute, isAnalyzing, naviga
           </p>
         </div>
 
-        <div style={{marginBottom:'2rem', display:'flex', justifyContent:'center'}}>
+        <div style={{marginBottom:'2rem', display:'flex', flexWrap:'wrap', justifyContent:'center', gap:'1rem', alignItems:'center'}}>
+          <select value={sport} onChange={e=>setSport(e.target.value)}
+            style={{background:'rgba(18,20,28,0.8)', border:'1px solid #1F222E', borderRadius:'12px', padding:'0.75rem 1.5rem', color:'#00E5FF', fontSize:'1rem', outline:'none'}}
+            className="mono">
+            <option value="basketball">Basketball</option>
+            <option value="coming_soon" disabled>Tennis (Coming Soon)</option>
+            <option value="coming_soon" disabled>Golf (Coming Soon)</option>
+          </select>
           <input
             type="text"
             placeholder="ENTER ATHLETE NAME (e.g., PARV)"
@@ -562,6 +588,44 @@ const IngestionPage = ({ videoFile, onFileSelect, onExecute, isAnalyzing, naviga
           )}
         </div>
 
+        {/* Clip selection — analyze only the selected time range */}
+        {videoFile && dur > 0 && (
+          <div style={{maxWidth:'560px',margin:'0 auto 2rem',padding:'1.25rem',background:'rgba(18,20,28,0.6)',border:'1px solid #1F222E',borderRadius:'16px'}}>
+            <p className="mono" style={{fontSize:'11px',color:'#6B7280',letterSpacing:'.15em',marginBottom:'12px'}}>SELECT CLIP RANGE (OPTIONAL)</p>
+            <div style={{display:'flex',flexWrap:'wrap',gap:'1rem',alignItems:'center'}}>
+              <div style={{flex:1,minWidth:'140px'}}>
+                <label className="mono" style={{fontSize:'11px',color:'#9CA3AF'}}>Start</label>
+                <input type="range" min={0} max={Math.max(0,dur-2)} step={0.5} value={Math.min(start,dur)}
+                  onChange={e=>setClipRange(r=>({...r,start:parseFloat(e.target.value)}))}
+                  style={{width:'100%',accentColor:'#00E5FF',marginTop:'4px'}}/>
+                <span className="mono" style={{fontSize:'12px',color:'#00E5FF'}}>{fmtT(start)}</span>
+              </div>
+              <div style={{flex:1,minWidth:'140px'}}>
+                <label className="mono" style={{fontSize:'11px',color:'#9CA3AF'}}>End</label>
+                <input type="range" min={2} max={dur} step={0.5} value={Math.min(end,dur)||dur}
+                  onChange={e=>setClipRange(r=>({...r,end:parseFloat(e.target.value)}))}
+                  style={{width:'100%',accentColor:'#39FF14',marginTop:'4px'}}/>
+                <span className="mono" style={{fontSize:'12px',color:'#39FF14'}}>{fmtT(end)}</span>
+              </div>
+            </div>
+            <p className="mono" style={{fontSize:'11px',color:'#6B7280',marginTop:'8px'}}>Clip: {fmtT(end-start)} — analyze one shot for best accuracy</p>
+          </div>
+        )}
+
+        {/* Recording tips — actionable best practices */}
+        <details style={{maxWidth:'560px',margin:'0 auto 2rem',cursor:'pointer'}} onToggle={e=>setShowTips(e.target.open)}>
+          <summary className="mono" style={{fontSize:'12px',color:'#00E5FF',letterSpacing:'.1em',padding:'12px',background:'rgba(0,229,255,.05)',borderRadius:'12px',border:'1px solid rgba(0,229,255,.2)'}}>
+            📹 Recording tips for best accuracy
+          </summary>
+          <ul style={{margin:'12px 0 0',paddingLeft:'1.5rem',fontSize:'0.95rem',color:'#9CA3AF',lineHeight:1.8}}>
+            <li>Record from a <strong style={{color:'#00E5FF'}}>45° front-offset</strong> (not pure side-view)</li>
+            <li>Use <strong style={{color:'#00E5FF'}}>landscape, 720p+</strong> at 30 fps or higher</li>
+            <li>One person in frame — single shooter for pro matching</li>
+            <li>Good lighting — avoid backlit or low-light shots</li>
+            <li>Include full body: dip → release → follow-through</li>
+          </ul>
+        </details>
+
         {videoFile && (
           <button onClick={onExecute} disabled={isAnalyzing} className="btn-primary mono" style={{padding:'1.5rem 4rem',borderRadius:'16px',fontSize:'1.2rem',display:'inline-flex',alignItems:'center',gap:'12px', margin:'0 auto'}}>
             <IcoZap sz={24}/>{isAnalyzing ? 'SYNTHESIZING... PLEASE WAIT' : 'INITIALIZE ORACLE ENGINE'}
@@ -577,7 +641,7 @@ const IngestionPage = ({ videoFile, onFileSelect, onExecute, isAnalyzing, naviga
 //  NOTE: videoRef/canvasRef live here (in App) and are passed down
 //        so the video element is never unmounted by routing
 // ══════════════════════════════════════════════════════════════
-const BiomechanicsPage = ({ stats, videoRef, canvasRef, videoObjectUrl, isVisible, detectionMetadata, validationWarnings, overlayConfig, setOverlayConfig }) => {
+const BiomechanicsPage = ({ stats, videoRef, canvasRef, videoObjectUrl, isVisible, detectionMetadata, validationWarnings, overlayConfig, setOverlayConfig, onVideoMetadataLoaded }) => {
   const s = stats || {};
   const vw = validationWarnings || [];
   const det = detectionMetadata || {};
@@ -659,6 +723,7 @@ const BiomechanicsPage = ({ stats, videoRef, canvasRef, videoObjectUrl, isVisibl
           <video ref={videoRef}
             style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'contain',
                     background:'#000',display:videoObjectUrl?'block':'none',zIndex:1}}
+            onLoadedMetadata={onVideoMetadataLoaded?()=>{const d=videoRef?.current?.duration;if(d!=null&&!isNaN(d))onVideoMetadataLoaded(d);}:undefined}
             playsInline controls/>
           <canvas ref={canvasRef}
             style={{position:'absolute',inset:0,width:'100%',height:'100%',pointerEvents:'none',zIndex:15}}/>
@@ -766,9 +831,21 @@ const OracleMatchPage = ({ stats, proMatch, matchedPro, deltas, feedback, scoutR
                   </div>
                   {(validationWarnings || []).length > 0 && (
                     <div style={{marginTop:'12px', padding:'12px', background:'rgba(0,229,255,0.05)', borderRadius:'12px', borderLeft:'3px solid rgba(0,229,255,0.5)'}}>
-                      <p className="mono" style={{fontSize:'10px', color:'#6B7280', letterSpacing:'.12em', marginBottom:'6px'}}>VIDEO QUALITY</p>
-                      <ul style={{margin:0, paddingLeft:'1rem', fontSize:'0.8rem', color:'#9CA3AF', lineHeight:1.5}}>
-                        {(validationWarnings || []).map((msg,i)=><li key={i}>{msg}</li>)}
+                      <p className="mono" style={{fontSize:'10px', color:'#6B7280', letterSpacing:'.12em', marginBottom:'6px'}}>VIDEO QUALITY — WHAT TO CHANGE</p>
+                      <ul style={{margin:0, paddingLeft:'1rem', fontSize:'0.8rem', color:'#9CA3AF', lineHeight:1.6}}>
+                        {(validationWarnings || []).map((msg,i)=>{
+                          const m=(msg||'').toLowerCase();
+                          let fix='';
+                          if(m.includes('resolution')||m.includes('720')) fix='→ Re-record at 720p or higher';
+                          else if(m.includes('framerate')||m.includes('fps')) fix='→ Use 30 fps or higher';
+                          else if(m.includes('multiple')||m.includes('people')) fix='→ Record only the shooter in frame';
+                          else if(m.includes('vertical')||m.includes('portrait')) fix='→ Use landscape, 45° angle';
+                          else if(m.includes('short')||m.includes('clip')) fix='→ Include one complete shot (dip → release)';
+                          else if(m.includes('visibility')) fix='→ Ensure full body and arm visible';
+                          else if(m.includes('fallback')) fix='→ Re-record with good lighting, single person';
+                          else if(m.includes('knee')||m.includes('elbow')) fix='→ Check camera angle, avoid occlusion';
+                          return <li key={i}>{msg}{fix&&<span style={{color:'#39FF14',marginLeft:'6px'}}>{fix}</span>}</li>;
+                        })}
                       </ul>
                     </div>
                   )}
@@ -1052,6 +1129,10 @@ const App = () => {
     showLabels: true, showReleasePoint: true, showShootingArmHighlight: true, showPhaseLabels: true
   });
   const overlayConfigRef = useRef(overlayConfig);
+  // Clip selection & personalization (sports-agnostic foundation)
+  const [videoDuration, setVideoDuration] = useState(null);
+  const [clipRange, setClipRange] = useState({ start: 0, end: null });
+  const [sport, setSport] = useState('basketball');
 
   // Video & canvas refs — live here so they persist across route changes
   const videoRef  = useRef(null);
@@ -1064,13 +1145,24 @@ const App = () => {
     telRef.current = data?.telemetry?.dip ? data.telemetry : null;
   }, [data]);
 
-  // Load video src when object URL changes
+  // Load video src when object URL changes; reset clip when video changes
   useEffect(() => {
     const v = videoRef.current;
     if (!v || !videoObjUrl) return;
+    setVideoDuration(null);
+    setClipRange({ start: 0, end: null });
     v.src = videoObjUrl;
     v.load();
   }, [videoObjUrl]);
+
+  // Capture duration when video metadata loads
+  const onVideoMetadataLoaded = useCallback(() => {
+    const v = videoRef.current;
+    if (v && v.duration && isFinite(v.duration)) {
+      setVideoDuration(v.duration);
+      setClipRange(prev => ({ start: 0, end: prev.end ?? v.duration }));
+    }
+  }, []);
 
   // Canvas rAF skeleton loop — Options 1+2: labels, release point, shooting arm, phase (model-agnostic)
   useEffect(() => {
@@ -1214,6 +1306,14 @@ const App = () => {
     try {
       const form = new FormData();
       form.append('video', videoFile);
+      // Clip selection: pass start_sec/end_sec when user selected a range
+      const dur = videoDuration;
+      const start = clipRange?.start ?? 0;
+      const end = clipRange?.end;
+      if (dur != null && end != null && (start > 0 || end < dur - 0.5)) {
+        form.append('start_sec', String(Math.max(0, start)));
+        form.append('end_sec', String(Math.min(dur, end)));
+      }
       const r = await fetch(`${API}/analyze-video`, { method:'POST', body:form });
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail || d.message || 'Analysis failed');
@@ -1222,7 +1322,7 @@ const App = () => {
       showToast(`Oracle failed: ${e.message}`);
     }
     setIsAnalyzing(false);
-  }, [videoFile]);
+  }, [videoFile, clipRange, videoDuration]);
 
   const handleAudio = useCallback(async () => {
     const fb = data?.athlete_feedback;
@@ -1300,7 +1400,9 @@ const App = () => {
       {/* PAGES — all mounted, controlled by display to keep video alive */}
       {isHome   && <IngestionPage videoFile={videoFile} onFileSelect={handleFileSelect}
                      onExecute={handleExecute} isAnalyzing={isAnalyzing} navigate={navigate}
-                     athleteName={athleteName} setAthleteName={setAthleteName}/>}
+                     athleteName={athleteName} setAthleteName={setAthleteName}
+                     videoDuration={videoDuration} clipRange={clipRange} setClipRange={setClipRange}
+                     sport={sport} setSport={setSport}/>}
 
       {/* Biomechanics page — always mounted when video loaded, hidden otherwise */}
       <div style={{display: isBio ? 'block' : 'none'}}>
@@ -1308,7 +1410,8 @@ const App = () => {
                           videoObjectUrl={videoObjUrl} isVisible={isBio}
                           detectionMetadata={data?.detection_metadata}
                           validationWarnings={data?.validation_warnings}
-                          overlayConfig={overlayConfig} setOverlayConfig={setOverlayConfig}/>
+                          overlayConfig={overlayConfig} setOverlayConfig={setOverlayConfig}
+                          onVideoMetadataLoaded={d=>{setVideoDuration(d);setClipRange({start:0,end:d});}}/>
       </div>
 
       {isOracle && <OracleMatchPage stats={s} proMatch={data?.pro_match}

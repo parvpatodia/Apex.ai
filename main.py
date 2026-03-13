@@ -11,7 +11,7 @@ from typing import Optional
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from google import genai
@@ -256,12 +256,29 @@ def _normalize_analysis(
 
 
 @app.post("/analyze-video")
-async def analyze_video(video: UploadFile = File(...)):
+async def analyze_video(
+    video: UploadFile = File(...),
+    start_sec: Optional[str] = Form(None),
+    end_sec: Optional[str] = Form(None),
+):
+    """Analyze video. Optional start_sec/end_sec restrict to user-selected clip (single shot)."""
     safe_name = f"temp_{uuid.uuid4()}.mp4"
     with open(safe_name, "wb") as b:
         b.write(await video.read())
     try:
-        biomech = KinematicAnalyzer(safe_name).analyze()
+        start_val = None
+        end_val = None
+        if start_sec is not None and str(start_sec).strip():
+            try:
+                start_val = float(start_sec)
+            except (TypeError, ValueError):
+                pass
+        if end_sec is not None and str(end_sec).strip():
+            try:
+                end_val = float(end_sec)
+            except (TypeError, ValueError):
+                pass
+        biomech = KinematicAnalyzer(safe_name).analyze(start_sec=start_val, end_sec=end_val)
 
         # Query ChromaDB BEFORE Gemini so we can compute deltas for the prompt.
         # Weights must mirror db_seeder.FEATURE_WEIGHTS exactly so query and index
