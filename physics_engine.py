@@ -86,21 +86,37 @@ class KinematicAnalyzer:
         new_w, new_h = int(w * scale), int(h * scale)
         return cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
 
-    def extract_frames(self):
+    def extract_frames(self, start_sec: float | None = None, end_sec: float | None = None):
+        """Extract pose data. Optional start_sec/end_sec restrict analysis to a clip (user-selected range)."""
         import mediapipe as mp
         cap = cv2.VideoCapture(self.video_path)
         if not cap.isOpened(): raise ValueError("Could not open video")
         fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-        
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+
+        # Clip selection: convert time range to frame indices
+        start_frame = 0
+        end_frame = total_frames if total_frames > 0 else 999999
+        if start_sec is not None and start_sec >= 0:
+            start_frame = min(int(start_sec * fps), total_frames - 1) if total_frames > 0 else int(start_sec * fps)
+        if end_sec is not None and end_sec > start_sec:
+            end_frame = min(int(end_sec * fps), total_frames) if total_frames > 0 else int(end_sec * fps)
+
         joints, sides = ["wrist", "elbow", "shoulder", "hip", "knee", "ankle"], ["left", "right"]
         data_3d = {f"{s}_{j}": [] for s in sides for j in joints}
         data_2d = {f"{s}_{j}": [] for s in sides for j in joints}
-        
+
         frame_idx = 0
         try:
             while True:
                 ret, frame = cap.read()
                 if not ret: break
+                # Only process frames within selected clip
+                if frame_idx < start_frame:
+                    frame_idx += 1
+                    continue
+                if frame_idx >= end_frame:
+                    break
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 rgb = self._preprocess_frame(rgb)
                 
@@ -244,7 +260,8 @@ class KinematicAnalyzer:
             flags.append(f"Elbow angle ({e}°) outside typical range. Ensure arm is visible at release.")
         return flags
 
-    def analyze(self):
+    def analyze(self, start_sec: float | None = None, end_sec: float | None = None):
+        """Analyze video. Optional start_sec/end_sec restrict to user-selected clip (e.g. single shot)."""
         try:
             # Extract physical aspect ratio to fix normalized coordinate distortion
             temp_cap = cv2.VideoCapture(self.video_path)
@@ -254,7 +271,7 @@ class KinematicAnalyzer:
             temp_cap.release()
 
             if not self._init_pose(): return self._fallback()
-            fps, raw_3d, raw_2d = self.extract_frames()
+            fps, raw_3d, raw_2d = self.extract_frames(start_sec=start_sec, end_sec=end_sec)
             
             if len(raw_2d["left_wrist"]) < 5: 
                 print("ERROR: Not enough frames extracted by MediaPipe.")
