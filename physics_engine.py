@@ -216,8 +216,19 @@ class KinematicAnalyzer:
         except Exception:
             return None
 
-    def _assess_video_quality(self, w: float, h: float, fps: float, total_frames: int) -> dict:
-        """Assess video quality for robustness. Returns notes that affect confidence."""
+    def _assess_video_quality(
+        self,
+        w: float,
+        h: float,
+        fps: float,
+        total_frames: int,
+        visibility: float = 0.0,
+        people_count: int = 1,
+    ) -> dict:
+        """
+        Pose-analysis suitability score (0–100). Research-grounded: log-scale resolution/FPS,
+        visibility-weighted. Ref: PMC 11695451 (OpenPose accuracy vs movement).
+        """
         notes = []
         if w < 320 or h < 240:
             notes.append("Low resolution may reduce pose accuracy. Use 720p or higher for best results.")
@@ -226,13 +237,31 @@ class KinematicAnalyzer:
         elif fps > 90:
             notes.append("Slow-motion detected. Kinetic sync timing adjusted for high-speed capture.")
         ar = w / h if h > 0 else 1.0
-        if ar < 0.6:  # Portrait/vertical
+        if ar < 0.6:
             notes.append("Vertical/portrait video can compress shot arc. For best accuracy, use landscape with a 45° angle.")
-        elif ar > 2.2:  # Ultra-wide
+        elif ar > 2.2:
             notes.append("Ultra-wide format may distort joint positions at frame edges.")
         if total_frames < 30:
             notes.append("Short clip: ensure it contains a single, complete jump shot for reliable analysis.")
-        return {"video_quality_notes": notes, "resolution": f"{int(w)}×{int(h)}", "fps": round(fps, 1)}
+
+        # Log-based quality formula (PHASE2_RESEARCH_GROUNDED)
+        max_dim = max(w, h, 320)
+        q_res = min(100, 20 * math.log10(max_dim / 320 + 1e-6) + 40)  # 320p baseline
+        q_res = max(0, q_res)
+        q_fps = min(15, 15 * min(fps / 30.0, 1.5))  # 30 fps reference
+        q_aspect = 10 if 0.6 <= ar <= 2.2 else 5
+        q_visibility = 30 * visibility  # 0–1 → 0–30 pts
+        q_people = 10 if people_count <= 1 else max(0, 10 - 5 * (people_count - 1))
+        score = int(np.clip(q_res + q_fps + q_aspect + q_visibility + q_people, 0, 100))
+
+        label = "Excellent" if score >= 80 else "Good" if score >= 60 else "Fair" if score >= 40 else "Low"
+        return {
+            "video_quality_notes": notes,
+            "resolution": f"{int(w)}×{int(h)}",
+            "fps": round(fps, 1),
+            "video_quality_score": score,
+            "video_quality_label": label,
+        }
 
     def _compute_pose_visibility(self, raw_2d: dict) -> float:
         """Average visibility (0–1) of key shooting joints across all frames."""
@@ -243,6 +272,56 @@ class KinematicAnalyzer:
             if arr is not None and len(arr) > 0 and arr.shape[1] >= 3:
                 vals.append(np.nanmean(arr[:, 2]))
         return float(np.mean(vals)) if vals else 0.0
+
+    def _compute_angle_uncertainty(
+        self,
+        h3d: np.ndarray,
+        k3d: np.ndarray,
+        a3d: np.ndarray,
+        s3d: np.ndarray,
+        e3d: np.ndarray,
+        w3d: np.ndarray,
+        dip_frame: int,
+        release_frame: int,
+        visibility: float,
+    ) -> dict:
+        """
+        Empirical uncertainty from frame-window variance. Ref: PMC 9397457.
+        Returns knee_angle_uncertainty and elbow_angle_uncertainty in degrees (±).
+        """
+        out = {}
+        half = 3
+        # Knee: window around dip
+        lo = max(0, dip_frame - half)
+        hi = min(len(k3d), dip_frame + half + 1)
+        k_angles = []
+        for i in range(lo, hi):
+            ang = _calculate_3d_angle(h3d[i], k3d[i], a3d[i])
+            if ang >= 10:
+                k_angles.append(ang)
+        if len(k_angles) >= 2:
+            std_k = float(np.nanstd(k_angles))
+            unc = max(3, min(12, std_k * 1.2))
+            if visibility < 0.6:
+                unc = min(12, unc * 1.5)
+            out["knee_angle_uncertainty"] = round(unc, 1)
+
+        # Elbow: window around release
+        lo = max(0, release_frame - half)
+        hi = min(len(e3d), release_frame + half + 1)
+        e_angles = []
+        for i in range(lo, hi):
+            ang = _calculate_3d_angle(s3d[i], e3d[i], w3d[i])
+            if ang >= 10:
+                e_angles.append(ang)
+        if len(e_angles) >= 2:
+            std_e = float(np.nanstd(e_angles))
+            unc = max(3, min(12, std_e * 1.2))
+            if visibility < 0.6:
+                unc = min(12, unc * 1.5)
+            out["elbow_angle_uncertainty"] = round(unc, 1)
+
+        return out
 
     def _compute_validation_flags(self, metrics: dict, visibility: float, used_fallback: bool) -> list:
         """Biological plausibility and data-quality checks. Returns human-readable warnings."""
@@ -259,6 +338,83 @@ class KinematicAnalyzer:
         if e is not None and (e < 100 or e > 180):
             flags.append(f"Elbow angle ({e}°) outside typical range. Ensure arm is visible at release.")
         return flags
+
+    def _compute_angle_uncertainty(
+        self,
+        h3d: np.ndarray,
+        k3d: np.ndarray,
+        a3d: np.ndarray,
+        s3d: np.ndarray,
+        e3d: np.ndarray,
+        w3d: np.ndarray,
+        dip_frame: int,
+        release_frame: int,
+        visibility: float,
+    ) -> tuple[float, float]:
+        """
+        Empirical uncertainty from frame-window variance (PMC 9397457).
+        Returns (knee_uncertainty_deg, elbow_uncertainty_deg). Clamped 3–12°; inflated if visibility low.
+        """
+        n = len(h3d)
+        win = 3
+        k_angles, e_angles = [], []
+        for i in range(max(0, dip_frame - win), min(n, dip_frame + win + 1)):
+            ang = _calculate_3d_angle(h3d[i], k3d[i], a3d[i])
+            if ang > 10:
+                k_angles.append(ang)
+        for i in range(max(0, release_frame - win), min(n, release_frame + win + 1)):
+            ang = _calculate_3d_angle(s3d[i], e3d[i], w3d[i])
+            if ang > 10:
+                e_angles.append(ang)
+        k_std = float(np.nanstd(k_angles)) if len(k_angles) >= 3 else 5.0
+        e_std = float(np.nanstd(e_angles)) if len(e_angles) >= 3 else 5.0
+        mult = 1.5 if visibility < 0.6 else 1.0
+        k_unc = max(3.0, min(12.0, k_std * 1.2 * mult))
+        e_unc = max(3.0, min(12.0, e_std * 1.2 * mult))
+        return (round(k_unc, 1), round(e_unc, 1))
+
+    def _compute_confidence_factors(
+        self,
+        video_quality_score: int,
+        people_count: int,
+        visibility: float,
+        validation_flags: list,
+        used_fallback: bool,
+    ) -> list[dict]:
+        """
+        Transparent attribution: factor, impact, message.
+        Sum of impacts approximates (100 - confidence). Actionable for users.
+        """
+        factors = []
+        if used_fallback:
+            factors.append({"factor": "fallback", "impact": -40, "message": "No clear shot detected"})
+            return factors
+        if video_quality_score < 60:
+            factors.append({
+                "factor": "video_quality",
+                "impact": -min(20, 60 - video_quality_score),
+                "message": f"Video quality {video_quality_score}/100 — re-record at 720p+, 30 fps",
+            })
+        if people_count > 1:
+            factors.append({
+                "factor": "multi_person",
+                "impact": -15,
+                "message": f"{people_count} people detected — record only the shooter",
+            })
+        if visibility < 0.5:
+            factors.append({
+                "factor": "pose_visibility",
+                "impact": -10,
+                "message": "Low joint visibility — ensure full body and good lighting",
+            })
+        if validation_flags:
+            pen = min(15, len(validation_flags) * 4)
+            factors.append({
+                "factor": "validation",
+                "impact": -pen,
+                "message": f"{len(validation_flags)} quality note(s) — see recommendations above",
+            })
+        return factors
 
     def analyze(self, start_sec: float | None = None, end_sec: float | None = None):
         """Analyze video. Optional start_sec/end_sec restrict to user-selected clip (e.g. single shot)."""
@@ -437,13 +593,16 @@ class KinematicAnalyzer:
 
             # Multi-person awareness: sample frames with num_poses=3 to estimate people count
             detection_metadata = self._count_people_sampled(fps, total_frames)
+            people_count = 1
             if detection_metadata:
                 telemetry["detection_metadata"] = detection_metadata
+                people_count = detection_metadata.get("people_detected_max", 1) or 1
+
+            visibility = self._compute_pose_visibility(raw_2d)
 
             # Video quality and validation (expert-grade robustness)
-            vq = self._assess_video_quality(w, h, fps, total_frames)
+            vq = self._assess_video_quality(w, h, fps, total_frames, visibility, people_count)
             telemetry["video_quality"] = vq
-            visibility = self._compute_pose_visibility(raw_2d)
             metrics_out = {
                 "release_velocity_mps": round(float(vel_mps), 2),
                 "shot_arc_deg": round(float(arc_deg), 1),
@@ -455,13 +614,29 @@ class KinematicAnalyzer:
                 "fluidity_score": fluidity,
             }
             validation_flags = self._compute_validation_flags(metrics_out, visibility, used_fallback=False)
-            telemetry["validation_warnings"] = validation_flags + (vq.get("video_quality_notes") or [])
+            all_warnings = validation_flags + (vq.get("video_quality_notes") or [])
+            telemetry["validation_warnings"] = all_warnings
+
+            # Per-metric uncertainty (PMC 9397457): frame-window variance
+            k_unc, e_unc = self._compute_angle_uncertainty(
+                h3d, k3d, a3d, s3d, e3d, w3d, dip_frame, release_frame, visibility
+            )
+            metrics_out["knee_angle_uncertainty"] = k_unc
+            metrics_out["elbow_angle_uncertainty"] = e_unc
+
+            # Transparent confidence attribution
+            vq_score = vq.get("video_quality_score", 50)
+            telemetry["confidence_factors"] = self._compute_confidence_factors(
+                vq_score, people_count, visibility, all_warnings, used_fallback=False
+            )
 
             return {
                 "release_velocity_mps": round(float(vel_mps), 2),
                 "shot_arc_deg": round(float(arc_deg), 1),
                 "knee_angle": round(float(np.clip(k_ang, 90, 180)), 1),
                 "elbow_angle": round(float(np.clip(e_ang, 100, 180)), 1),
+                "knee_angle_uncertainty": k_unc,
+                "elbow_angle_uncertainty": e_unc,
                 "knee_flexion_at_dip": round(float(np.clip(k_ang, 90, 180)), 1),
                 "elbow_flexion_at_release": round(float(np.clip(e_ang, 100, 180)), 1),
                 "kinetic_sync_ms": round(float(sync_ms), 1),

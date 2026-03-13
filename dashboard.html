@@ -284,10 +284,11 @@ const IcoInfo   = I(<><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="
 // ══════════════════════════════════════════════════════════════
 //  METRIC CARD WITH TOOLTIP — modal overlay (no overlap with bottom cards)
 // ══════════════════════════════════════════════════════════════
-const MetricCardWithTooltip = ({ m, value, tooltip }) => {
+const MetricCardWithTooltip = ({ m, value, uncertainty, tooltip }) => {
   const [show, setShow] = useState(false);
   const tt = tooltip || METRIC_TOOLTIPS[m.key];
   const hasTooltip = !!tt;
+  const hasUncertainty = (m.key === 'knee_angle' || m.key === 'elbow_angle') && uncertainty != null && uncertainty > 0;
   return (
     <>
       <div className="metric-card glass-panel" style={{position:'relative',borderRadius:'20px',padding:'2rem',
@@ -305,7 +306,9 @@ const MetricCardWithTooltip = ({ m, value, tooltip }) => {
           )}
         </div>
         <p className="mono" style={{fontSize:'clamp(2.5rem, 5vw, 4rem)',fontWeight:700,lineHeight:1,color:'#fff',margin:0}}>
-          {fmt(value)}{' '}
+          {fmt(value)}
+          {hasUncertainty && <span style={{fontSize:'1rem',color:'#6B7280',fontWeight:500,marginLeft:'4px'}}>± {uncertainty}°</span>}
+          {' '}
           <span style={{fontSize:'1.1rem',color:'#374151',fontWeight:400,marginLeft:'6px'}}>{m.unit}</span>
         </p>
       </div>
@@ -641,7 +644,7 @@ const IngestionPage = ({ videoFile, onFileSelect, onExecute, isAnalyzing, naviga
 //  NOTE: videoRef/canvasRef live here (in App) and are passed down
 //        so the video element is never unmounted by routing
 // ══════════════════════════════════════════════════════════════
-const BiomechanicsPage = ({ stats, videoRef, canvasRef, videoObjectUrl, isVisible, detectionMetadata, validationWarnings, overlayConfig, setOverlayConfig, onVideoMetadataLoaded }) => {
+const BiomechanicsPage = ({ stats, videoRef, canvasRef, videoObjectUrl, isVisible, detectionMetadata, validationWarnings, overlayConfig, setOverlayConfig, onVideoMetadataLoaded, videoQualityScore, videoQualityLabel }) => {
   const s = stats || {};
   const vw = validationWarnings || [];
   const det = detectionMetadata || {};
@@ -663,6 +666,16 @@ const BiomechanicsPage = ({ stats, videoRef, canvasRef, videoObjectUrl, isVisibl
           </div>
         </div>
 
+        {/* Video quality badge — Phase 2 research-grounded score */}
+        {videoQualityScore != null && (
+          <div style={{maxWidth:'900px',margin:'0 auto 1rem',display:'flex',flexWrap:'wrap',gap:'12px',alignItems:'center'}}>
+            <div style={{display:'flex',alignItems:'center',gap:'8px',padding:'10px 20px',background:'rgba(57,255,20,.08)',border:'1px solid rgba(57,255,20,.3)',borderRadius:'12px'}}>
+              <span className="mono" style={{fontSize:'11px',color:'#6B7280',letterSpacing:'.15em'}}>VIDEO QUALITY</span>
+              <span className="mono glow-green" style={{fontSize:'16px',fontWeight:800,color:'#39FF14'}}>{videoQualityScore}/100</span>
+              <span className="mono" style={{fontSize:'12px',color:'#9CA3AF'}}>— {videoQualityLabel || 'Good'}</span>
+            </div>
+          </div>
+        )}
         {/* Algorithm HUD + Multi-person note */}
         {videoObjectUrl && (
           <div style={{maxWidth:'900px',margin:'0 auto 1rem',display:'flex',flexWrap:'wrap',gap:'12px',alignItems:'center'}}>
@@ -739,7 +752,8 @@ const BiomechanicsPage = ({ stats, videoRef, canvasRef, videoObjectUrl, isVisibl
         </div>
         <div className="metric-grid" style={{marginBottom:'2rem'}}>
           {METRICS.map(m=>(
-            <MetricCardWithTooltip key={m.key} m={m} value={s[m.key]} />
+            <MetricCardWithTooltip key={m.key} m={m} value={s[m.key]}
+              uncertainty={m.key==='knee_angle'?s.knee_angle_uncertainty:m.key==='elbow_angle'?s.elbow_angle_uncertainty:undefined} />
           ))}
         </div>
       </div>
@@ -751,7 +765,7 @@ const BiomechanicsPage = ({ stats, videoRef, canvasRef, videoObjectUrl, isVisibl
 //  PAGE 3 — ORACLE MATCH  (#/oracle-match)
 // ══════════════════════════════════════════════════════════════
 const OracleMatchPage = ({ stats, proMatch, matchedPro, deltas, feedback, scoutReport,
-                           assetImg, assetStatus, onGenAsset, isGenAsset, confidence, athleteName, wittyCatchphrase, validationWarnings }) => {
+                           assetImg, assetStatus, onGenAsset, isGenAsset, confidence, athleteName, wittyCatchphrase, validationWarnings, confidenceFactors }) => {
   const s  = stats  || {};
   const vs = matchedPro?.vector_stats || {};
   const d  = deltas || {};
@@ -829,6 +843,15 @@ const OracleMatchPage = ({ stats, proMatch, matchedPro, deltas, feedback, scoutR
                       For 95%+ confidence: record from a <strong style={{color:'#00E5FF'}}>45° front-offset</strong>; pure side-view compresses Knee/Hip depth.
                     </p>
                   </div>
+                  {/* Why this score? — Phase 2 transparent attribution */}
+                  {Array.isArray(confidenceFactors) && confidenceFactors.length > 0 && (
+                    <div style={{marginTop:'12px', padding:'12px', background:'rgba(0,229,255,0.04)', borderRadius:'12px', borderLeft:'3px solid rgba(0,229,255,0.5)'}}>
+                      <p className="mono" style={{fontSize:'10px', color:'#6B7280', letterSpacing:'.12em', marginBottom:'8px'}}>WHY THIS SCORE?</p>
+                      <ul style={{margin:0, paddingLeft:'1.25rem', fontSize:'0.85rem', color:'#9CA3AF', lineHeight:1.7}}>
+                        {confidenceFactors.map((f,i)=>(<li key={i}><span style={{color:'#00E5FF',fontWeight:600}}>{f.factor}</span>: {f.message} {f.impact<0&&<span style={{color:'#ff9500'}}>({f.impact})</span>}</li>))}
+                      </ul>
+                    </div>
+                  )}
                   {(validationWarnings || []).length > 0 && (
                     <div style={{marginTop:'12px', padding:'12px', background:'rgba(0,229,255,0.05)', borderRadius:'12px', borderLeft:'3px solid rgba(0,229,255,0.5)'}}>
                       <p className="mono" style={{fontSize:'10px', color:'#6B7280', letterSpacing:'.12em', marginBottom:'6px'}}>VIDEO QUALITY — WHAT TO CHANGE</p>
@@ -1411,7 +1434,8 @@ const App = () => {
                           detectionMetadata={data?.detection_metadata}
                           validationWarnings={data?.validation_warnings}
                           overlayConfig={overlayConfig} setOverlayConfig={setOverlayConfig}
-                          onVideoMetadataLoaded={d=>{setVideoDuration(d);setClipRange({start:0,end:d});}}/>
+                          onVideoMetadataLoaded={d=>{setVideoDuration(d);setClipRange({start:0,end:d});}}
+                          videoQualityScore={data?.video_quality_score} videoQualityLabel={data?.video_quality_label}/>
       </div>
 
       {isOracle && <OracleMatchPage stats={s} proMatch={data?.pro_match}
@@ -1421,7 +1445,8 @@ const App = () => {
                      onGenAsset={handleGenAsset} isGenAsset={isGenAsset}
                      confidence={data?.confidence} athleteName={athleteName}
                      wittyCatchphrase={data?.witty_catchphrase}
-                     validationWarnings={data?.validation_warnings}/>}
+                     validationWarnings={data?.validation_warnings}
+                     confidenceFactors={data?.confidence_factors}/>}
 
       <MetaModal open={showMeta} onClose={()=>setShowMeta(false)} payload={metaPayload}/>
       <Toast msg={toast}/>

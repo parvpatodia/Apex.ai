@@ -264,6 +264,8 @@ def _normalize_analysis(
     feedback = data.get("athlete_feedback") or []
     if not isinstance(feedback, list):
         feedback = [{"timestamp": "", "category": "general", "observation": str(feedback)}]
+    telemetry = biomech.get("telemetry") or {}
+    vq = telemetry.get("video_quality") or {}
     return {
         **data,
         "athlete_action": data.get("athlete_action") or "—",
@@ -273,6 +275,8 @@ def _normalize_analysis(
             "shot_arc_deg": biomech.get("shot_arc_deg"),
             "knee_angle": biomech.get("knee_angle"),
             "elbow_angle": biomech.get("elbow_angle"),
+            "knee_angle_uncertainty": biomech.get("knee_angle_uncertainty"),
+            "elbow_angle_uncertainty": biomech.get("elbow_angle_uncertainty"),
             "kinetic_sync_ms": biomech.get("kinetic_sync_ms"),
             "hip_rotation_deg": biomech.get("hip_rotation_deg"),
             "balance_index": biomech.get("balance_index"),
@@ -283,7 +287,10 @@ def _normalize_analysis(
         "athlete_feedback": feedback,
         "pro_match": pro_match,
         "matched_pro": matched_pro,
-        "telemetry": biomech.get("telemetry") or {},
+        "telemetry": telemetry,
+        "video_quality_score": vq.get("video_quality_score"),
+        "video_quality_label": vq.get("video_quality_label"),
+        "confidence_factors": telemetry.get("confidence_factors", []),
     }
 
 
@@ -454,6 +461,12 @@ REQUIRED: Add `witty_catchphrase` — a short (max 8 words), fun, player-specifi
         out["confidence"] = confidence_score
         out["detection_metadata"] = det
         out["validation_warnings"] = vw
+        # Phase 2: video quality, confidence factors for transparent attribution
+        tel = biomech.get("telemetry") or {}
+        vq = tel.get("video_quality") or {}
+        out["video_quality_score"] = vq.get("video_quality_score")
+        out["video_quality_label"] = vq.get("video_quality_label")
+        out["confidence_factors"] = tel.get("confidence_factors") or []
         return out
     finally:
         if os.path.exists(safe_name):
