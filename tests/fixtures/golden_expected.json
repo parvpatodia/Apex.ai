@@ -1,0 +1,23 @@
+{
+  "baseline": {
+    "release_velocity_mps": 4.0,
+    "shot_arc_deg": 30.0,
+    "knee_angle": 156.8,
+    "elbow_angle": 115.1,
+    "kinetic_sync_ms": 366.8,
+    "hip_rotation_deg": -22.9,
+    "balance_index": 87,
+    "fluidity_score": 93
+  },
+  "tolerances": {
+    "release_velocity_mps": 0.6,
+    "shot_arc_deg": 6.0,
+    "knee_angle": 10.0,
+    "elbow_angle": 10.0,
+    "kinetic_sync_ms": 50.0,
+    "hip_rotation_deg": 8.0,
+    "balance_index": 15,
+    "fluidity_score": 15
+  },
+  "_comment": "Auto-generated from golden_shot.mp4. Tolerances allow CI drift."
+}

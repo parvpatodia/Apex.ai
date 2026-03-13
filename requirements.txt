@@ -23,3 +23,6 @@ scipy
 
 # NBA data (db_seeder)
 nba_api
+
+# Testing (regression, CI)
+pytest>=7.0

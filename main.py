@@ -66,17 +66,29 @@ def calculate_market_index(vector: list[float], match_distance: float) -> str:
         return "$45k - Developmental"
     return "$8k - Amateur"
 
+# CORS: Production URL + local dev. Set CORS_ORIGINS env to override (comma-separated).
+_DEFAULT_ORIGINS = [
+    "https://lakshai-production.up.railway.app",
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://localhost:8000",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:8000",
+]
+_CORS_ORIGINS = [
+    o.strip() for o in os.environ.get("CORS_ORIGINS", ",".join(_DEFAULT_ORIGINS)).split(",") if o.strip()
+]
+
 app = FastAPI()
-from fastapi.middleware.cors import CORSMiddleware
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://lakshai-production.up.railway.app"], # In production, restrict this to your React app's domain
+    allow_origins=_CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
 _DASHBOARD = Path(__file__).resolve().parent / "dashboard.html"
@@ -154,6 +166,26 @@ def root():
 @app.get("/api")
 def api_status():
     return {"status": "Apex Oracle Engine Active", "docs": "/docs"}
+
+
+@app.get("/health")
+def health():
+    """
+    Liveness probe for Railway / load balancers.
+    Returns 200 if ChromaDB is ready; 503 if not.
+    """
+    try:
+        coll = _get_collection()
+        n = getattr(coll, "count", None)
+        cnt = n() if callable(n) else (n if isinstance(n, int) else 0)
+        return {
+            "status": "ok",
+            "chroma_ready": True,
+            "collection_count": cnt,
+        }
+    except Exception as e:
+        logger.warning("Health check failed: %s", e)
+        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
 
 # 8D vector schema (db_seeder v7 = physics_engine output = query_vector in /analyze-video):
 # [release_velocity_mps, shot_arc_deg, knee_angle, elbow_angle, kinetic_sync_ms, fluidity_score, hip_rotation_deg, balance_index]

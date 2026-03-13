@@ -130,6 +130,17 @@ docker run -p 8000:8000 -e GEMINI_API_KEY=your-key laksh-oracle
 |----------|----------|-------------|
 | `GEMINI_API_KEY` | Yes | Google AI Studio API key for Gemini and Imagen |
 | `GOOGLE_APPLICATION_CREDENTIALS` | No | Path to service account JSON for Cloud TTS (enables Studio Voices) |
+| `CORS_ORIGINS` | No | Comma-separated origins (default: production + localhost) |
+
+---
+
+## Testing
+
+```bash
+pytest tests/ -v
+```
+
+Regression test requires a golden video. See [docs/GOLDEN_VIDEO_GUIDE.md](docs/GOLDEN_VIDEO_GUIDE.md) for how to create one. Without it, the test is skipped.
 
 ---
 
@@ -138,7 +149,8 @@ docker run -p 8000:8000 -e GEMINI_API_KEY=your-key laksh-oracle
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/` | GET | Serves dashboard HTML |
-| `/api` | GET | Health check |
+| `/api` | GET | API status |
+| `/health` | GET | Liveness probe (ChromaDB readiness); 503 if unavailable |
 | `/docs` | GET | OpenAPI/Swagger UI |
 | `/analyze-video` | POST | `video` (multipart): Returns full analysis with pro match, scout report, feedback |
 | `/generate-metric-card` | POST | `{ "match": "Player Name" }`: Returns Imagen 4 card or SVG fallback |
